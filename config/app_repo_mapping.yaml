@@ -1,0 +1,75 @@
+# Application to Repository Mapping Configuration
+# This file maps MuleSoft CloudHub application names to their GitHub repositories
+
+# Format:
+# app_mappings:
+#   <application-name>:
+#     repo: <org/repo-name>
+#     branch: <default-branch>  # Optional, defaults to 'main'
+#     description: <description>  # Optional
+
+app_mappings:
+  # ---------------------------------------------------------------------------
+  # Demo / simulator applications used by this POC
+  # ---------------------------------------------------------------------------
+  # The OTLP error simulator generates incidents for these CloudHub app names.
+  # Map them to the actual GitHub repository that contains the sample code.
+
+  order-processing-service:
+    repo: avinash-ai-langchain/order-processing-service
+    branch: main
+    description: "Order processing service - handles order validation and fulfillment"
+
+# Default fallback configuration
+defaults:
+  # Default organization if not found in mappings
+  organization: your-org
+  
+  # Default branch to use
+  default_branch: main
+  
+  # Search strategy if app not in mapping:
+  # - exact: Only match exact repo names
+  # - fuzzy: Allow partial matches (default)
+  # - prefix: Match repos starting with app name
+  search_strategy: fuzzy
+
+# CloudHub environment to branch mapping (optional)
+# Map CloudHub environments to specific Git branches
+environment_branch_mapping:
+  development: develop
+  dev: develop
+  test: test
+  testing: test
+  staging: staging
+  stage: staging
+  production: main
+  prod: main
+
+# File path conventions for different application types
+file_path_conventions:
+  dataweave:
+    - src/main/resources/dataweave/**/*.dwl
+    - src/main/resources/dw/**/*.dwl
+  
+  mule_xml:
+    - src/main/mule/**/*.xml
+    #- src/main/resources/**/*.xml
+  
+  yaml:
+    #- src/main/resources/**/*.yaml
+    #- src/main/resources/**/*.yml
+    - config/**/*.yaml
+  
+  java:
+    - src/main/java/**/*.java
+    - src/test/java/**/*.java
+
+# Notes for configuration:
+# 1. Add your actual MuleSoft applications and their corresponding GitHub repositories
+# 2. Update the 'organization' in defaults to your GitHub organization
+# 3. Customize environment_branch_mapping based on your branching strategy
+# 4. The system will use this mapping in order:
+#    a. Exact match from app_mappings
+#    b. Search in organization using search_strategy
+#    c. Fallback to app_name as repo_name
