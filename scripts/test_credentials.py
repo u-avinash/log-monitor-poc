@@ -141,7 +141,7 @@ def test_jira():
 def main():
     """Run all credential tests."""
     print("\n" + "="*60)
-    print("🔐 Log Monitor POC - Credential Verification")
+    print("🔐 Prism AI - Credential Verification")
     print("="*60)
     
     github_ok = test_github()
@@ -157,7 +157,7 @@ def main():
         print("\n✅ All integrations are properly configured!")
         print("\nYou can now:")
         print("  1. Restart the API: python ingestion/api.py")
-        print("  2. Restart the UI: streamlit run ui/app.py")
+        print("  2. Restart the UI: python -m uvicorn ui.server:app --host 0.0.0.0 --port 8001 --reload")
         print("  3. Create a test incident to trigger integrations")
         return 0
     else:

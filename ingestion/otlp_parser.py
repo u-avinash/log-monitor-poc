@@ -1,7 +1,7 @@
 """OTLP (OpenTelemetry Protocol) parser for log ingestion."""
 from typing import Dict, List, Optional, Any
 from datetime import datetime
-from storage.models import IncidentCreate
+from storage.models import IncidentCreate, TelemetryLogCreate
 import json
 import logging
 
@@ -114,9 +114,52 @@ class OTLPParser:
             self.stats["errors"] += 1
             return []
     
+    def parse_otlp_json_to_logs(self, payload: Dict[str, Any]) -> List[TelemetryLogCreate]:
+        """
+        Parse OTLP JSON format into telemetry log records.
+
+        Args:
+            payload: OTLP JSON payload
+
+        Returns:
+            List of TelemetryLogCreate objects
+        """
+        telemetry_logs = []
+
+        try:
+            resource_logs = payload.get("resourceLogs", [])
+
+            for resource_log in resource_logs:
+                resource_attrs = self._extract_attributes(
+                    resource_log.get("resource", {}).get("attributes", [])
+                )
+
+                scope_logs = resource_log.get("scopeLogs", [])
+
+                for scope_log in scope_logs:
+                    scope = scope_log.get("scope", {})
+                    scope_name = scope.get("name", "unknown")
+
+                    log_records = scope_log.get("logRecords", [])
+
+                    for log_record in log_records:
+                        telemetry_log = self._parse_telemetry_log_record(
+                            log_record,
+                            resource_attrs,
+                            scope_name
+                        )
+                        if telemetry_log:
+                            telemetry_logs.append(telemetry_log)
+
+            return telemetry_logs
+
+        except Exception as e:
+            logger.error(f"OTLP telemetry log parsing error: {str(e)}", exc_info=True)
+            return []
+
     def _parse_log_record(
-        self, 
-        log_record: Dict[str, Any], 
+        self,
+        log_record: Dict[str, Any],
         resource_attrs: Dict[str, Any],
         scope_name: str
     ) -> Optional[IncidentCreate]:
@@ -143,100 +186,50 @@ class OTLPParser:
             if all_attrs:
                 logger.debug(f"[OTLP Parser] Full attributes: {json.dumps(all_attrs, indent=2, default=str)}")
             
-            # Determine severity
-            severity_number = log_record.get("severityNumber", 0)
-            severity_text = log_record.get("severityText", "")
-            severity = self._map_severity(severity_number, severity_text)
+            telemetry_log = self._parse_telemetry_log_record(
+                log_record,
+                resource_attrs,
+                scope_name
+            )
+            if not telemetry_log:
+                return None
+
+            severity_number = telemetry_log.severity_number or 0
+            severity = telemetry_log.severity
             
             # Only process ERROR and above (severity_number >= 17)
             if severity_number < 17:
                 logger.debug(f"Skipping log with severity {severity} (number: {severity_number})")
                 return None
             
-            # Extract log body (main message)
-            body = log_record.get("body", {})
-            error_message = self._extract_body_value(body)
-            
-            # Extract exception details if present (OTLP semantic conventions)
-            exception_message = all_attrs.get("exception.message", error_message)
-            exception_type = all_attrs.get("exception.type", "UnknownException")
-            stack_trace = all_attrs.get("exception.stacktrace", "")
-            
-            # Extract CloudHub-specific attributes first (highest priority)
-            cloudhub_app = all_attrs.get("cloudhub.application.name", 
-                                        all_attrs.get("application.name", 
-                                        all_attrs.get("app.name", 
-                                        all_attrs.get("mule.application.name", ""))))
-            cloudhub_org = all_attrs.get("cloudhub.org.id",
-                                        all_attrs.get("organization.id", ""))
-            cloudhub_region = all_attrs.get("cloudhub.region", "")
-            
-            # Extract environment with multiple fallbacks
-            environment = (
-                all_attrs.get("deployment.environment") or
-                all_attrs.get("environment") or
-                all_attrs.get("env") or
-                all_attrs.get("cloudhub.environment") or
-                all_attrs.get("mule.environment") or
-                "unknown"
-            )
-            
-            # Determine app_name: prioritize CloudHub app name, then service.name
-            app_name = cloudhub_app or all_attrs.get("service.name", "unknown-service")
-            
-            # Extract trace context for correlation
-            trace_id = log_record.get("traceId", "")
-            span_id = log_record.get("spanId", "")
+            exception_message = telemetry_log.error_message or telemetry_log.message
+            exception_type = telemetry_log.error_type or "UnknownException"
+            stack_trace = telemetry_log.attributes.get("exception.stacktrace", "")
+            cloudhub_app = telemetry_log.attributes.get("cloudhub.application.name", "")
+            cloudhub_org = telemetry_log.attributes.get("cloudhub.org.id", telemetry_log.attributes.get("organization.id", ""))
+            cloudhub_region = telemetry_log.attributes.get("cloudhub.region", "")
             trace_flags = log_record.get("flags", 0)
-            
-            # Convert trace_id from bytes/base64 if needed
-            if trace_id and isinstance(trace_id, str):
-                trace_id = self._format_trace_id(trace_id)
-            
-            # Extract timestamp
-            time_unix_nano = log_record.get("timeUnixNano", 0)
-            observed_time_unix_nano = log_record.get("observedTimeUnixNano", 0)
-            
-            # Construct error title
+
             if exception_type and exception_message:
                 error_title = f"{exception_type}: {exception_message[:100]}"
             else:
-                error_title = error_message[:150] if error_message else "Unknown Error"
-            
-            # Build comprehensive error description
+                error_title = telemetry_log.message[:150] if telemetry_log.message else "Unknown Error"
+
             error_description = self._build_error_description(
                 exception_message,
-                all_attrs,
+                telemetry_log.attributes,
                 cloudhub_app,
                 cloudhub_org,
                 cloudhub_region
             )
-            
-            # Build raw log for full context
-            raw_log = json.dumps({
-                "otlp_version": "1.0",
-                "message": error_message,
-                "severity": severity,
-                "severity_number": severity_number,
-                "attributes": all_attrs,
-                "scope": scope_name,
-                "timestamp_unix_nano": time_unix_nano,
-                "observed_timestamp_unix_nano": observed_time_unix_nano,
-                "trace_id": trace_id,
-                "span_id": span_id,
-                "trace_flags": trace_flags,
-                "cloudhub": {
-                    "application": cloudhub_app,
-                    "organization": cloudhub_org,
-                    "region": cloudhub_region
-                } if cloudhub_app or cloudhub_org else None
-            }, indent=2)
+
+            raw_log = telemetry_log.raw_payload
             
             # Build comprehensive metadata including ALL custom attributes
             metadata = {
                 # OTLP-specific fields
-                "otlp_trace_id": trace_id,
-                "otlp_span_id": span_id,
+                "otlp_trace_id": telemetry_log.trace_id,
+                "otlp_span_id": telemetry_log.span_id,
                 "otlp_severity_number": severity_number,
                 "otlp_scope": scope_name,
                 "exception_type": exception_type,
@@ -247,20 +240,20 @@ class OTLPParser:
                 "cloudhub_region": cloudhub_region,
                 
                 # Store ALL custom attributes from OTLP (prefixed to avoid conflicts)
-                "custom_attributes": all_attrs
+                "custom_attributes": telemetry_log.attributes
             }
             
             logger.info(f"[OTLP Parser] Incident metadata includes {len(all_attrs)} custom attributes")
             
             # Create incident
             incident = IncidentCreate(
-                app_name=app_name,
-                environment=environment,
+                app_name=telemetry_log.app_name,
+                environment=telemetry_log.environment,
                 error_title=error_title,
                 error_description=error_description,
-                stack_trace=stack_trace or self._extract_stack_from_body(error_message),
+                stack_trace=stack_trace or self._extract_stack_from_body(telemetry_log.message),
                 raw_log=raw_log,
-                severity=severity,  # Pass calculated severity from OTLP severityNumber
+                severity=severity,
                 metadata=metadata
             )
             
@@ -271,6 +264,98 @@ class OTLPParser:
             logger.error(f"Error parsing log record: {str(e)}", exc_info=True)
             return None
     
+    def _parse_telemetry_log_record(
+        self,
+        log_record: Dict[str, Any],
+        resource_attrs: Dict[str, Any],
+        scope_name: str
+    ) -> Optional[TelemetryLogCreate]:
+        """Parse individual OTLP log record into telemetry log model."""
+        try:
+            log_attrs = self._extract_attributes(log_record.get("attributes", []))
+            all_attrs = {**resource_attrs, **log_attrs}
+
+            severity_number = log_record.get("severityNumber", 0)
+            severity_text = log_record.get("severityText", "")
+            severity = self._map_severity(severity_number, severity_text)
+
+            body = log_record.get("body", {})
+            message = self._extract_body_value(body)
+            error_message = all_attrs.get("exception.message", message)
+            error_type = all_attrs.get("exception.type")
+
+            cloudhub_app = all_attrs.get(
+                "cloudhub.application.name",
+                all_attrs.get(
+                    "application.name",
+                    all_attrs.get("app.name", all_attrs.get("mule.application.name", "")),
+                ),
+            )
+            environment = (
+                all_attrs.get("deployment.environment")
+                or all_attrs.get("environment")
+                or all_attrs.get("env")
+                or all_attrs.get("cloudhub.environment")
+                or all_attrs.get("mule.environment")
+                or "unknown"
+            )
+            app_name = cloudhub_app or all_attrs.get("service.name", "unknown-service")
+            deployment_type = (
+                all_attrs.get("mule.deployment.type")
+                or all_attrs.get("deployment.type")
+                or all_attrs.get("cloud.platform")
+                or all_attrs.get("cloud.provider")
+            )
+
+            trace_id = log_record.get("traceId", "")
+            span_id = log_record.get("spanId", "")
+            if trace_id and isinstance(trace_id, str):
+                trace_id = self._format_trace_id(trace_id)
+
+            time_unix_nano = log_record.get("timeUnixNano", 0)
+            observed_time_unix_nano = log_record.get("observedTimeUnixNano", 0)
+
+            timestamp = self._parse_unix_nano_timestamp(time_unix_nano)
+            observed_timestamp = self._parse_unix_nano_timestamp(observed_time_unix_nano)
+
+            return TelemetryLogCreate(
+                app_name=app_name,
+                environment=environment,
+                message=message,
+                severity=severity,
+                timestamp=timestamp,
+                observed_timestamp=observed_timestamp,
+                deployment_type=deployment_type,
+                severity_number=severity_number or None,
+                error_type=error_type,
+                error_message=error_message,
+                trace_id=trace_id or None,
+                span_id=span_id or None,
+                flow_name=all_attrs.get("mule.flow.name") or all_attrs.get("flow.name"),
+                logger_name=all_attrs.get("logger.name"),
+                service_name=all_attrs.get("service.name"),
+                source_scope=scope_name,
+                raw_payload=json.dumps(
+                    {
+                        "otlp_version": "1.0",
+                        "message": message,
+                        "severity": severity,
+                        "severity_number": severity_number,
+                        "attributes": all_attrs,
+                        "scope": scope_name,
+                        "timestamp_unix_nano": time_unix_nano,
+                        "observed_timestamp_unix_nano": observed_time_unix_nano,
+                        "trace_id": trace_id,
+                        "span_id": span_id,
+                    },
+                    indent=2,
+                ),
+                attributes=all_attrs,
+            )
+        except Exception as e:
+            logger.error(f"Error parsing telemetry log record: {str(e)}", exc_info=True)
+            return None
+
     def _extract_attributes(self, attributes: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
         Extract attributes from OTLP attribute array.
@@ -419,6 +504,15 @@ class OTLPParser:
         
         return "\n".join(parts)
     
+    def _parse_unix_nano_timestamp(self, value: Any) -> datetime:
+        """Convert OTLP unix nano timestamps to datetime."""
+        try:
+            if not value:
+                return datetime.utcnow()
+            return datetime.fromtimestamp(int(value) / 1_000_000_000)
+        except Exception:
+            return datetime.utcnow()
+
     def _extract_stack_from_body(self, message: str) -> str:
         """Try to extract stack trace from message body."""
         # Look for common stack trace patterns

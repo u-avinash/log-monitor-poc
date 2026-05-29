@@ -1,0 +1,290 @@
+{% extends "base.html" %}
+
+{% block title %}Log Viewer — Prism{% endblock %}
+{% block topbar_title %}Log Viewer{% endblock %}
+
+{% block topbar_actions %}
+<span class="topbar-status" id="liveIndicator">
+  <span class="status-dot status-dot--online"></span>
+  <span class="status-label">Tailing</span>
+</span>
+<button class="btn btn-ghost btn-sm" id="pauseBtn">⏸ Pause</button>
+<button class="btn btn-ghost btn-sm" id="clearBtn">✕ Clear</button>
+<button class="btn btn-ghost btn-sm" id="exportLogsBtn">↓ Export</button>
+{% endblock %}
+
+{% block content %}
+<div class="page-content page-content--logs">
+  <div class="log-filters">
+    <input type="search" class="input-search log-search" id="logSearch" placeholder="Search logs…" />
+
+    <select class="select-sm" id="levelFilter">
+      <option value="">All Severities</option>
+      <option value="CRITICAL">CRITICAL</option>
+      <option value="HIGH">HIGH</option>
+      <option value="MEDIUM">MEDIUM</option>
+      <option value="LOW">LOW</option>
+    </select>
+
+    <select class="select-sm" id="appFilter">
+      <option value="">All Applications</option>
+    </select>
+
+    <select class="select-sm" id="environmentFilter">
+      <option value="">All Environments</option>
+    </select>
+
+    <select class="select-sm" id="incidentFilter">
+      <option value="">All Log Types</option>
+      <option value="true">Incident-backed</option>
+      <option value="false">Telemetry only</option>
+    </select>
+
+    <label class="toggle-label">
+      <input type="checkbox" id="wrapToggle" />
+      <span>Wrap</span>
+    </label>
+  </div>
+
+  <!-- ── Log Level Summary ── -->
+  <div class="log-summary" id="logSummary">
+    <span class="log-summary-item log-level-critical" id="countCritical">CRITICAL: 0</span>
+    <span class="log-summary-item log-level-error" id="countHigh">HIGH: 0</span>
+    <span class="log-summary-item log-level-warning" id="countMedium">MEDIUM: 0</span>
+    <span class="log-summary-item log-level-info" id="countLow">LOW: 0</span>
+    <span class="log-summary-sep">|</span>
+    <span class="text-muted" id="totalCount">0 entries</span>
+  </div>
+
+  <!-- ── Log Stream ── -->
+  <div class="log-stream-wrapper">
+    <div class="log-stream" id="logStream" role="log" aria-live="polite">
+      <div class="log-entry log-level-info">
+        <span class="log-msg">Loading logs…</span>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  "use strict";
+
+  const $ = id => document.getElementById(id);
+
+  const LEVEL_CLS = {
+    CRITICAL: "log-level-critical",
+    HIGH: "log-level-error",
+    MEDIUM: "log-level-warning",
+    LOW: "log-level-info",
+  };
+
+  let allLogs = [];
+  let paused = false;
+  let timer = null;
+
+  function escHtml(s) {
+    return String(s || "")
+      .replace(/&/g, "&")
+      .replace(/</g, "<")
+      .replace(/>/g, ">");
+  }
+
+  function formatTimestamp(ts) {
+    if (!ts) return "n/a";
+    const date = new Date(ts);
+    return Number.isNaN(date.getTime()) ? ts : date.toLocaleString();
+  }
+
+  function renderEntry(entry) {
+    const cls = LEVEL_CLS[entry.severity] || "log-level-info";
+    const badge = entry.incident_created && entry.incident_id
+      ? `<a class="log-svc" href="/incidents/${encodeURIComponent(entry.incident_id)}">[Incident ${escHtml(entry.incident_id)}]</a>`
+      : `<span class="log-svc">[Telemetry]</span>`;
+
+    return `<div class="log-entry ${cls}" data-level="${escHtml(entry.severity)}" data-app="${escHtml(entry.app_name || "")}" data-environment="${escHtml(entry.environment || "")}">
+      <span class="log-ts">${escHtml(formatTimestamp(entry.timestamp))}</span>
+      <span class="log-lvl">${escHtml((entry.severity || "").padEnd(8))}</span>
+      <span class="log-svc">[${escHtml(entry.app_name || "unknown-app")} | ${escHtml(entry.environment || "unknown")}]</span>
+      <span class="log-msg">${escHtml(entry.message || entry.error_message || "")}</span>
+      ${badge}
+    </div>`;
+  }
+
+  function renderEmpty(message) {
+    $("logStream").innerHTML = `<div class="log-entry log-level-info"><span class="log-msg">${escHtml(message)}</span></div>`;
+  }
+
+  function updateSummary(filteredLogs) {
+    const counts = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 };
+    filteredLogs.forEach(log => {
+      counts[log.severity] = (counts[log.severity] || 0) + 1;
+    });
+
+    $("countCritical").textContent = `CRITICAL: ${counts.CRITICAL}`;
+    $("countHigh").textContent = `HIGH: ${counts.HIGH}`;
+    $("countMedium").textContent = `MEDIUM: ${counts.MEDIUM}`;
+    $("countLow").textContent = `LOW: ${counts.LOW}`;
+    $("totalCount").textContent = `${filteredLogs.length} entries`;
+  }
+
+  function populateSelect(selectId, values, placeholder) {
+    const select = $(selectId);
+    if (!select) return;
+    const currentValue = select.value;
+    select.innerHTML = `<option value="">${placeholder}</option>` + values.map(value => (
+      `<option value="${escHtml(value)}">${escHtml(value)}</option>`
+    )).join("");
+    select.value = values.includes(currentValue) ? currentValue : "";
+  }
+
+  function applyFilters() {
+    const q = ($("logSearch").value || "").toLowerCase();
+    const level = $("levelFilter").value;
+    const app = $("appFilter").value;
+    const environment = $("environmentFilter").value;
+    const incidentFilter = $("incidentFilter").value;
+
+    const filtered = allLogs.filter(entry => {
+      if (level && entry.severity !== level) return false;
+      if (app && entry.app_name !== app) return false;
+      if (environment && entry.environment !== environment) return false;
+      if (incidentFilter === "true" && !entry.incident_created) return false;
+      if (incidentFilter === "false" && entry.incident_created) return false;
+
+      if (q) {
+        const haystack = [
+          entry.message,
+          entry.error_message,
+          entry.app_name,
+          entry.environment,
+          entry.trace_id,
+          entry.flow_name,
+        ].filter(Boolean).join(" ").toLowerCase();
+
+        if (!haystack.includes(q)) return false;
+      }
+
+      return true;
+    });
+
+    if (!filtered.length) {
+      renderEmpty("No logs match the selected filters.");
+    } else {
+      $("logStream").innerHTML = filtered.map(renderEntry).join("");
+      if (!paused) $("logStream").scrollTop = $("logStream").scrollHeight;
+    }
+
+    updateSummary(filtered);
+  }
+
+  async function fetchLogs() {
+    const params = new URLSearchParams();
+    params.set("limit", "250");
+
+    const level = $("levelFilter").value;
+    const app = $("appFilter").value;
+    const environment = $("environmentFilter").value;
+    const search = $("logSearch").value.trim();
+    const incidentCreated = $("incidentFilter").value;
+
+    if (level) params.set("severity", level);
+    if (app) params.set("app_name", app);
+    if (environment) params.set("environment", environment);
+    if (search) params.set("search", search);
+    if (incidentCreated) params.set("incident_created", incidentCreated);
+
+    const response = await fetch(`/api/logs?${params.toString()}`, {
+      headers: { "Accept": "application/json" }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to load logs (${response.status})`);
+    }
+
+    const payload = await response.json();
+    allLogs = Array.isArray(payload.items) ? payload.items : [];
+
+    const filters = payload.filters || {};
+    populateSelect("appFilter", filters.applications || [], "All Applications");
+    populateSelect("environmentFilter", filters.environments || [], "All Environments");
+
+    applyFilters();
+  }
+
+  async function refreshLogs() {
+    try {
+      await fetchLogs();
+      $("liveIndicator").querySelector(".status-dot").className = "status-dot status-dot--online";
+      $("liveIndicator").querySelector(".status-label").textContent = paused ? "Paused" : "Live";
+    } catch (error) {
+      renderEmpty(error.message || "Failed to load logs.");
+      $("liveIndicator").querySelector(".status-dot").className = "status-dot status-dot--offline";
+      $("liveIndicator").querySelector(".status-label").textContent = "Offline";
+    }
+  }
+
+  function startTailing() {
+    timer = setInterval(() => {
+      if (!paused) refreshLogs();
+    }, 5000);
+  }
+
+  function exportLogs() {
+    const txt = allLogs.map(entry => (
+      `${formatTimestamp(entry.timestamp)} ${String(entry.severity || "").padEnd(8)} [${entry.app_name || "unknown-app"}|${entry.environment || "unknown"}] ${entry.message || entry.error_message || ""}`
+    )).join("\n");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([txt], { type: "text/plain" }));
+    a.download = `prism-logs-${Date.now()}.log`;
+    a.click();
+  }
+
+  function init() {
+    refreshLogs();
+    startTailing();
+
+    $("pauseBtn").addEventListener("click", () => {
+      paused = !paused;
+      $("pauseBtn").textContent = paused ? "▶ Resume" : "⏸ Pause";
+      $("liveIndicator").querySelector(".status-dot").className =
+        "status-dot " + (paused ? "status-dot--offline" : "status-dot--online");
+      $("liveIndicator").querySelector(".status-label").textContent = paused ? "Paused" : "Live";
+    });
+
+    $("clearBtn").addEventListener("click", () => {
+      allLogs = [];
+      applyFilters();
+    });
+
+    $("exportLogsBtn").addEventListener("click", exportLogs);
+
+    ["logSearch", "levelFilter", "appFilter", "environmentFilter", "incidentFilter"].forEach(id => {
+      const el = $(id);
+      if (el) {
+        el.addEventListener(id === "logSearch" ? "input" : "change", () => {
+          if (id === "logSearch" || id === "levelFilter" || id === "appFilter" || id === "environmentFilter" || id === "incidentFilter") {
+            refreshLogs();
+          } else {
+            applyFilters();
+          }
+        });
+      }
+    });
+
+    $("wrapToggle").addEventListener("change", e => {
+      $("logStream").style.whiteSpace = e.target.checked ? "pre-wrap" : "pre";
+    });
+
+    const refreshBtn = $("refreshBtn");
+    if (refreshBtn) refreshBtn.addEventListener("click", refreshLogs);
+  }
+
+  document.readyState === "loading"
+    ? document.addEventListener("DOMContentLoaded", init)
+    : init();
+})();
+</script>
+{% endblock %}

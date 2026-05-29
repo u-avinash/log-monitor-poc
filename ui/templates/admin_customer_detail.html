@@ -1,0 +1,610 @@
+{% extends "base.html" %}
+{% block title %}{{ customer.name }} — Prism Admin{% endblock %}
+{% block topbar_title %}Admin · {{ customer.name }}{% endblock %}
+{% block topbar_actions %}
+<a href="/admin/customers" class="btn btn-ghost btn-sm">← All Customers</a>
+<button class="btn btn-primary btn-sm" onclick="saveOverview()">Save Changes</button>
+{% endblock %}
+
+{% block content %}
+<div class="page-container">
+  <div class="breadcrumb">
+    <a href="/admin/customers" class="bc-link">Customers</a>
+    <span class="bc-sep">›</span>
+    <span class="bc-current">{{ customer.name }}</span>
+  </div>
+
+  <div class="customer-banner">
+    <div class="customer-banner-avatar">{{ customer.name[0]|upper }}{{ customer.name[1]|upper if customer.name|length > 1 else '' }}</div>
+    <div class="customer-banner-info">
+      <h1 class="customer-banner-name">{{ customer.name }}</h1>
+      <div class="customer-banner-meta">
+        {% if customer.industry %}<span>{{ customer.industry }}</span> · {% endif %}
+        {% if customer.website %}<a href="{{ customer.website }}" target="_blank" class="bc-link">{{ customer.website }}</a> · {% endif %}
+        <span>ID: <code>{{ customer.id }}</code></span>
+      </div>
+    </div>
+    <div class="customer-banner-badges">
+      <span class="badge badge-{{ 'success' if customer.status=='active' else 'warning' if customer.status=='trial' else 'error' }} badge-lg">{{ customer.status|capitalize }}</span>
+      <span class="badge badge-plan-{{ customer.plan }} badge-lg">{{ customer.plan|capitalize }}</span>
+    </div>
+  </div>
+
+  <div class="tab-bar" id="tabBar">
+    <button class="tab-btn" data-tab="overview">Overview</button>
+    <button class="tab-btn" data-tab="environments">Environments <span class="tab-count">{{ customer.environments|length }}</span></button>
+    <button class="tab-btn" data-tab="team">Team <span class="tab-count">{{ customer.team_members|length }}</span></button>
+    <button class="tab-btn" data-tab="integrations">Integrations</button>
+  </div>
+
+  <!-- OVERVIEW -->
+  <div class="tab-panel" id="tab-overview">
+    <div class="form-grid">
+      <div class="form-section">
+        <h3 class="form-section-title">Organisation Details</h3>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Company Name <span class="required">*</span></label>
+            <input type="text" id="ov-name" class="form-control" value="{{ customer.name }}" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Industry</label>
+            <select id="ov-industry" class="form-control">
+              {% for ind in ['','E-Commerce','FinTech','HealthTech','SaaS','Logistics','Media','Gaming','EdTech','Other'] %}
+              <option value="{{ ind }}" {{ 'selected' if customer.industry==ind }}>{{ ind or '— Select —' }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group form-group--full">
+            <label class="form-label">Description</label>
+            <textarea id="ov-description" class="form-control" rows="2">{{ customer.description }}</textarea>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Website</label>
+            <input type="url" id="ov-website" class="form-control" value="{{ customer.website }}" placeholder="https://…" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Plan</label>
+            <select id="ov-plan" class="form-control">
+              <option value="starter" {{ 'selected' if customer.plan=='starter' }}>Starter</option>
+              <option value="growth" {{ 'selected' if customer.plan=='growth' }}>Growth</option>
+              <option value="enterprise" {{ 'selected' if customer.plan=='enterprise' }}>Enterprise</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Status</label>
+            <select id="ov-status" class="form-control">
+              <option value="active" {{ 'selected' if customer.status=='active' }}>Active</option>
+              <option value="trial" {{ 'selected' if customer.status=='trial' }}>Trial</option>
+              <option value="suspended" {{ 'selected' if customer.status=='suspended' }}>Suspended</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Timezone</label>
+            <select id="ov-timezone" class="form-control">
+              {% for tz in ['UTC','America/New_York','America/Los_Angeles','Europe/London','Europe/Paris','Asia/Kolkata','Asia/Singapore','Asia/Tokyo','Australia/Sydney'] %}
+              <option value="{{ tz }}" {{ 'selected' if customer.timezone==tz }}>{{ tz }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <h3 class="form-section-title">Primary Contact</h3>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Contact Name</label>
+            <input type="text" id="ov-contact-name" class="form-control" value="{{ customer.contact_name }}" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Contact Email</label>
+            <input type="email" id="ov-contact-email" class="form-control" value="{{ customer.contact_email }}" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Phone</label>
+            <input type="tel" id="ov-contact-phone" class="form-control" value="{{ customer.contact_phone }}" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Alert Email</label>
+            <input type="email" id="ov-alert-email" class="form-control" value="{{ customer.alert_email }}" />
+          </div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <h3 class="form-section-title">Limits & Retention</h3>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Incident Retention (days)</label>
+            <input type="number" id="ov-retention" class="form-control" value="{{ customer.incident_retention_days }}" min="1" max="730" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Max Incidents / Day</label>
+            <input type="number" id="ov-max-incidents" class="form-control" value="{{ customer.max_incidents_per_day }}" min="1" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group form-group--full">
+            <label class="form-label">Internal Notes</label>
+            <textarea id="ov-notes" class="form-control" rows="3" placeholder="Internal notes…">{{ customer.notes }}</textarea>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <button class="btn btn-primary" onclick="saveOverview()">Save Overview</button>
+        <span class="save-status" id="overviewSaveStatus"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ENVIRONMENTS -->
+  <div class="tab-panel" id="tab-environments" style="display:none">
+    <div class="section-toolbar">
+      <h3 class="section-title">Environments</h3>
+      <button class="btn btn-primary btn-sm" onclick="showAddEnvModal()">+ Add Environment</button>
+    </div>
+    <div id="envListWrap">
+    {% if customer.environments %}
+    <div class="data-table-wrap">
+      <table class="data-table">
+        <thead><tr><th>Name</th><th>Type</th><th>Endpoint</th><th>Region</th><th>Status</th><th>Added</th><th></th></tr></thead>
+        <tbody id="envTableBody">
+          {% for env in customer.environments %}
+          <tr id="env-row-{{ env.id }}">
+            <td><strong>{{ env.name }}</strong></td>
+            <td><span class="env-type-badge env-type-{{ env.type }}">{{ env.type|capitalize }}</span></td>
+            <td class="text-mono text-sm">{{ env.endpoint or '—' }}</td>
+            <td>{{ env.region or '—' }}</td>
+            <td><span class="status-pill status-pill--{{ env.status }}">{{ env.status }}</span></td>
+            <td class="text-muted text-sm">{{ env.created_at[:10] }}</td>
+            <td><button class="btn btn-ghost btn-xs text-error" onclick="removeEnv('{{ env.id }}')">Remove</button></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state empty-state--sm">
+      <div class="empty-state-icon">🌐</div>
+      <p class="empty-state-body">No environments configured.</p>
+    </div>
+    {% endif %}
+    </div>
+    <div class="inline-modal" id="addEnvModal" style="display:none">
+      <div class="inline-modal-header"><span>Add Environment</span><button class="modal-close-sm" onclick="hideAddEnvModal()">✕</button></div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Name <span class="required">*</span></label>
+          <input type="text" id="env-name" class="form-control" placeholder="Production" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Type</label>
+          <select id="env-type" class="form-control">
+            <option value="production">Production</option>
+            <option value="staging">Staging</option>
+            <option value="development">Development</option>
+            <option value="qa">QA</option>
+            <option value="dr">DR</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Endpoint URL</label>
+          <input type="url" id="env-endpoint" class="form-control" placeholder="https://api.example.com" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Region</label>
+          <input type="text" id="env-region" class="form-control" placeholder="us-east-1" />
+        </div>
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-ghost btn-sm" onclick="hideAddEnvModal()">Cancel</button>
+        <button class="btn btn-primary btn-sm" onclick="addEnvironment()">Add Environment</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TEAM -->
+  <div class="tab-panel" id="tab-team" style="display:none">
+    <div class="section-toolbar">
+      <h3 class="section-title">Team Members</h3>
+      <button class="btn btn-primary btn-sm" onclick="showAddMemberModal()">+ Invite Member</button>
+    </div>
+    <div id="teamListWrap">
+    {% if customer.team_members %}
+    <div class="data-table-wrap">
+      <table class="data-table">
+        <thead><tr><th>Member</th><th>Email</th><th>Role</th><th>Access</th><th>Status</th><th>Invited</th><th></th></tr></thead>
+        <tbody id="teamTableBody">
+          {% for m in customer.team_members %}
+          <tr id="member-row-{{ m.id }}">
+            <td>
+              <div class="member-cell">
+                <div class="member-avatar-sm">{{ m.name[0]|upper if m.name else m.email[0]|upper }}</div>
+                <span>{{ m.name or '—' }}</span>
+              </div>
+            </td>
+            <td class="text-mono text-sm">{{ m.email }}</td>
+            <td><span class="role-badge role-{{ m.role }}">{{ m.role|capitalize }}</span></td>
+            <td>
+              <select class="select-inline" onchange="updateMemberAccess('{{ m.id }}', this.value)">
+                <option value="admin" {{ 'selected' if m.access_level=='admin' }}>Admin</option>
+                <option value="write" {{ 'selected' if m.access_level=='write' }}>Write</option>
+                <option value="read" {{ 'selected' if m.access_level=='read' }}>Read</option>
+              </select>
+            </td>
+            <td><span class="status-pill status-pill--{{ m.status }}">{{ m.status }}</span></td>
+            <td class="text-muted text-sm">{{ m.invited_at[:10] }}</td>
+            <td>
+              {% if m.role != 'owner' %}
+              <button class="btn btn-ghost btn-xs text-error" onclick="removeMember('{{ m.id }}')">Remove</button>
+              {% else %}<span class="text-muted text-xs">Owner</span>{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state empty-state--sm">
+      <div class="empty-state-icon">👥</div>
+      <p class="empty-state-body">No team members yet.</p>
+    </div>
+    {% endif %}
+    </div>
+    <div class="inline-modal" id="addMemberModal" style="display:none">
+      <div class="inline-modal-header"><span>Invite Team Member</span><button class="modal-close-sm" onclick="hideAddMemberModal()">✕</button></div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Email <span class="required">*</span></label>
+          <input type="email" id="member-email" class="form-control" placeholder="user@example.com" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Name</label>
+          <input type="text" id="member-name" class="form-control" placeholder="Full name" />
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Role</label>
+          <select id="member-role" class="form-control">
+            <option value="member">Member</option>
+            <option value="admin">Admin</option>
+            <option value="viewer">Viewer</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Access Level</label>
+          <select id="member-access" class="form-control">
+            <option value="read">Read</option>
+            <option value="write">Write</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-ghost btn-sm" onclick="hideAddMemberModal()">Cancel</button>
+        <button class="btn btn-primary btn-sm" onclick="addMember()">Send Invite</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- INTEGRATIONS -->
+  <div class="tab-panel" id="tab-integrations" style="display:none">
+    <div class="section-toolbar">
+      <h3 class="section-title">Integrations</h3>
+    </div>
+    <div class="integrations-grid">
+
+      <div class="integration-card">
+        <div class="integration-card-header">
+          <div class="integration-icon integration-icon--github">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0 1 12 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/></svg>
+          </div>
+          <div>
+            <div class="integration-name">GitHub</div>
+            <div class="integration-desc">Source code & pull requests</div>
+          </div>
+          <span class="status-pill status-pill--{{ 'active' if customer.github_org else 'inactive' }} ms-auto">
+            {{ 'Connected' if customer.github_org else 'Not set' }}
+          </span>
+        </div>
+        <div class="form-row mt-2">
+          <div class="form-group form-group--full">
+            <label class="form-label">GitHub Organisation / User</label>
+            <input type="text" id="int-github-org" class="form-control" value="{{ customer.github_org }}" placeholder="my-org" />
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="btn btn-primary btn-sm" onclick="saveIntegration('github')">Save</button>
+          <span class="save-status" id="githubSaveStatus"></span>
+        </div>
+      </div>
+
+      <div class="integration-card">
+        <div class="integration-card-header">
+          <div class="integration-icon integration-icon--jira">J</div>
+          <div>
+            <div class="integration-name">Jira</div>
+            <div class="integration-desc">Issue tracking & project management</div>
+          </div>
+          <span class="status-pill status-pill--{{ 'active' if customer.jira_project_key else 'inactive' }} ms-auto">
+            {{ 'Connected' if customer.jira_project_key else 'Not set' }}
+          </span>
+        </div>
+        <div class="form-row mt-2">
+          <div class="form-group">
+            <label class="form-label">Jira Project Key</label>
+            <input type="text" id="int-jira-key" class="form-control" value="{{ customer.jira_project_key }}" placeholder="PROJ" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Jira URL</label>
+            <input type="url" id="int-jira-url" class="form-control" value="{{ customer.jira_url }}" placeholder="https://org.atlassian.net" />
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="btn btn-primary btn-sm" onclick="saveIntegration('jira')">Save</button>
+          <span class="save-status" id="jiraSaveStatus"></span>
+        </div>
+      </div>
+
+      <div class="integration-card">
+        <div class="integration-card-header">
+          <div class="integration-icon integration-icon--slack">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M5.042 15.165a2.528 2.528 0 0 1-2.52 2.523A2.528 2.528 0 0 1 0 15.165a2.527 2.527 0 0 1 2.522-2.52h2.52v2.52zm1.271 0a2.527 2.527 0 0 1 2.521-2.52 2.527 2.527 0 0 1 2.521 2.52v6.313A2.528 2.528 0 0 1 8.834 24a2.528 2.528 0 0 1-2.521-2.522v-6.313zM8.834 5.042a2.528 2.528 0 0 1-2.521-2.52A2.528 2.528 0 0 1 8.834 0a2.528 2.528 0 0 1 2.521 2.522v2.52H8.834zm0 1.271a2.528 2.528 0 0 1 2.521 2.521 2.528 2.528 0 0 1-2.521 2.521H2.522A2.528 2.528 0 0 1 0 8.834a2.528 2.528 0 0 1 2.522-2.521h6.312zm10.122 2.521a2.528 2.528 0 0 1 2.522-2.521A2.528 2.528 0 0 1 24 8.834a2.528 2.528 0 0 1-2.522 2.521h-2.522V8.834zm-1.268 0a2.528 2.528 0 0 1-2.523 2.521 2.527 2.527 0 0 1-2.52-2.521V2.522A2.527 2.527 0 0 1 15.165 0a2.528 2.528 0 0 1 2.523 2.522v6.312zm-2.523 10.122a2.528 2.528 0 0 1 2.523 2.522A2.528 2.528 0 0 1 15.165 24a2.527 2.527 0 0 1-2.52-2.522v-2.522h2.52zm0-1.268a2.527 2.527 0 0 1-2.52-2.523 2.526 2.526 0 0 1 2.52-2.52h6.313A2.527 2.527 0 0 1 24 15.165a2.528 2.528 0 0 1-2.522 2.523h-6.313z"/></svg>
+          </div>
+          <div>
+            <div class="integration-name">Slack</div>
+            <div class="integration-desc">Alert notifications</div>
+          </div>
+          <span class="status-pill status-pill--{{ 'active' if customer.slack_webhook_url else 'inactive' }} ms-auto">
+            {{ 'Connected' if customer.slack_webhook_url else 'Not set' }}
+          </span>
+        </div>
+        <div class="form-row mt-2">
+          <div class="form-group form-group--full">
+            <label class="form-label">Slack Webhook URL</label>
+            <input type="url" id="int-slack-webhook" class="form-control" value="{{ customer.slack_webhook_url }}" placeholder="https://hooks.slack.com/…" />
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="btn btn-primary btn-sm" onclick="saveIntegration('slack')">Save</button>
+          <span class="save-status" id="slackSaveStatus"></span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+<style>
+.customer-banner{display:flex;align-items:center;gap:1.25rem;background:var(--surface-1);border:1px solid var(--border);border-radius:12px;padding:1.25rem 1.5rem;margin-bottom:1.5rem}
+.customer-banner-avatar{width:56px;height:56px;border-radius:12px;background:linear-gradient(135deg,var(--accent),var(--accent-dark,#4338ca));color:#fff;font-size:1.4rem;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.customer-banner-info{flex:1;min-width:0}
+.customer-banner-name{font-size:1.4rem;font-weight:700;margin:0 0 .25rem}
+.customer-banner-meta{font-size:.85rem;color:var(--text-muted)}
+.customer-banner-badges{display:flex;gap:.5rem;align-items:center;flex-shrink:0}
+.badge-lg{padding:.35rem .75rem;font-size:.8rem}
+.badge-plan-starter{background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0}
+.badge-plan-growth{background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe}
+.badge-plan-enterprise{background:#faf5ff;color:#7e22ce;border:1px solid #e9d5ff}
+.tab-bar{display:flex;gap:.25rem;border-bottom:1px solid var(--border);margin-bottom:1.5rem}
+.tab-btn{padding:.6rem 1rem;background:none;border:none;border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer;font-size:.9rem;color:var(--text-muted);font-weight:500;transition:all .15s}
+.tab-btn:hover{color:var(--text)}
+.tab-btn.active{color:var(--accent);border-bottom-color:var(--accent)}
+.tab-count{background:var(--surface-2);border-radius:999px;padding:.1rem .45rem;font-size:.75rem;margin-left:.35rem}
+.form-grid{display:flex;flex-direction:column;gap:1.5rem}
+.form-section{background:var(--surface-1);border:1px solid var(--border);border-radius:10px;padding:1.25rem 1.5rem}
+.form-section-title{font-size:.95rem;font-weight:600;margin:0 0 1rem;color:var(--text)}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:.75rem}
+.form-group{display:flex;flex-direction:column;gap:.35rem}
+.form-group--full{grid-column:1/-1}
+.form-label{font-size:.82rem;font-weight:500;color:var(--text-muted)}
+.form-control{padding:.5rem .75rem;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text);font-size:.9rem;transition:border-color .15s}
+.form-control:focus{outline:none;border-color:var(--accent)}
+.form-actions{display:flex;align-items:center;gap:1rem;padding-top:.5rem}
+.save-status{font-size:.82rem;color:var(--success)}
+.required{color:var(--error)}
+.section-toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem}
+.section-title{font-size:1.05rem;font-weight:600;margin:0}
+.data-table-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:10px}
+.data-table{width:100%;border-collapse:collapse;font-size:.875rem}
+.data-table th{padding:.65rem 1rem;text-align:left;font-size:.78rem;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--border);background:var(--surface-2)}
+.data-table td{padding:.7rem 1rem;border-bottom:1px solid var(--border)}
+.data-table tbody tr:last-child td{border-bottom:none}
+.data-table tbody tr:hover{background:var(--surface-2)}
+.env-type-badge{display:inline-block;padding:.2rem .5rem;border-radius:4px;font-size:.75rem;font-weight:500}
+.env-type-production{background:#fef2f2;color:#dc2626}
+.env-type-staging{background:#fff7ed;color:#ea580c}
+.env-type-development{background:#f0fdf4;color:#15803d}
+.env-type-qa{background:#eff6ff;color:#1d4ed8}
+.env-type-dr{background:#faf5ff;color:#7e22ce}
+.status-pill{display:inline-flex;align-items:center;padding:.2rem .55rem;border-radius:999px;font-size:.75rem;font-weight:500}
+.status-pill--active{background:#f0fdf4;color:#15803d}
+.status-pill--inactive{background:var(--surface-2);color:var(--text-muted)}
+.status-pill--trial{background:#fffbeb;color:#d97706}
+.status-pill--suspended{background:#fef2f2;color:#dc2626}
+.status-pill--pending{background:#eff6ff;color:#1d4ed8}
+.member-cell{display:flex;align-items:center;gap:.6rem}
+.member-avatar-sm{width:28px;height:28px;border-radius:50%;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.role-badge{display:inline-block;padding:.2rem .5rem;border-radius:4px;font-size:.75rem;font-weight:500;background:var(--surface-2);color:var(--text-muted)}
+.role-owner{background:#faf5ff;color:#7e22ce}
+.role-admin{background:#fff7ed;color:#ea580c}
+.select-inline{border:1px solid var(--border);border-radius:4px;background:var(--surface-2);color:var(--text);font-size:.82rem;padding:.2rem .4rem;cursor:pointer}
+.inline-modal{margin-top:1.5rem;background:var(--surface-1);border:1px solid var(--border);border-radius:10px;padding:1.25rem 1.5rem}
+.inline-modal-header{display:flex;align-items:center;justify-content:space-between;font-size:.95rem;font-weight:600;margin-bottom:1rem}
+.modal-close-sm{background:none;border:none;cursor:pointer;font-size:1rem;color:var(--text-muted);padding:.2rem .4rem;border-radius:4px}
+.modal-close-sm:hover{background:var(--surface-2)}
+.integrations-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:1.25rem}
+.integration-card{background:var(--surface-1);border:1px solid var(--border);border-radius:10px;padding:1.25rem 1.5rem}
+.integration-card-header{display:flex;align-items:center;gap:.75rem;margin-bottom:.25rem}
+.integration-icon{width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:1rem;font-weight:700;flex-shrink:0}
+.integration-icon--github{background:#24292e;color:#fff}
+.integration-icon--jira{background:#0052cc;color:#fff}
+.integration-icon--slack{background:#4a154b;color:#fff}
+.integration-name{font-size:.9rem;font-weight:600}
+.integration-desc{font-size:.78rem;color:var(--text-muted)}
+.ms-auto{margin-left:auto}
+.mt-2{margin-top:.75rem}
+.text-mono{font-family:monospace}
+.text-sm{font-size:.82rem}
+.text-muted{color:var(--text-muted)}
+.text-xs{font-size:.75rem}
+.text-error{color:var(--error,#dc2626)}
+.btn-xs{padding:.2rem .5rem;font-size:.75rem}
+.breadcrumb{display:flex;align-items:center;gap:.4rem;margin-bottom:1rem;font-size:.85rem}
+.bc-link{color:var(--accent);text-decoration:none}
+.bc-link:hover{text-decoration:underline}
+.bc-sep{color:var(--text-muted)}
+.bc-current{color:var(--text-muted)}
+.empty-state--sm{padding:2rem;text-align:center;border:1px solid var(--border);border-radius:10px}
+.empty-state-icon{font-size:2rem;margin-bottom:.5rem}
+.empty-state-body{color:var(--text-muted);font-size:.9rem;margin:0}
+</style>
+
+<script>
+const CUST_ID = "{{ customer.id }}";
+
+// Tab switching
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.style.display = 'none');
+    btn.classList.add('active');
+    document.getElementById('tab-' + btn.dataset.tab).style.display = 'block';
+  });
+});
+document.querySelector('.tab-btn[data-tab="overview"]').click();
+
+function showStatus(id, msg, ok=true) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = msg;
+  el.style.color = ok ? 'var(--success,#15803d)' : 'var(--error,#dc2626)';
+  setTimeout(() => { el.textContent = ''; }, 3000);
+}
+
+async function saveOverview() {
+  const payload = {
+    name: document.getElementById('ov-name').value.trim(),
+    industry: document.getElementById('ov-industry').value,
+    description: document.getElementById('ov-description').value.trim(),
+    website: document.getElementById('ov-website').value.trim(),
+    plan: document.getElementById('ov-plan').value,
+    status: document.getElementById('ov-status').value,
+    timezone: document.getElementById('ov-timezone').value,
+    contact_name: document.getElementById('ov-contact-name').value.trim(),
+    contact_email: document.getElementById('ov-contact-email').value.trim(),
+    contact_phone: document.getElementById('ov-contact-phone').value.trim(),
+    alert_email: document.getElementById('ov-alert-email').value.trim(),
+    incident_retention_days: parseInt(document.getElementById('ov-retention').value) || 90,
+    max_incidents_per_day: parseInt(document.getElementById('ov-max-incidents').value) || 1000,
+    notes: document.getElementById('ov-notes').value.trim()
+  };
+  if (!payload.name) { showStatus('overviewSaveStatus', 'Name is required', false); return; }
+  try {
+    const r = await fetch(`/admin/customers/${CUST_ID}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+    const d = await r.json();
+    if (r.ok) { showStatus('overviewSaveStatus', '✓ Saved'); }
+    else { showStatus('overviewSaveStatus', d.detail || 'Error', false); }
+  } catch(e) { showStatus('overviewSaveStatus', 'Network error', false); }
+}
+
+// Environments
+function showAddEnvModal() { document.getElementById('addEnvModal').style.display='block'; }
+function hideAddEnvModal() { document.getElementById('addEnvModal').style.display='none'; }
+
+async function addEnvironment() {
+  const name = document.getElementById('env-name').value.trim();
+  if (!name) { alert('Environment name is required'); return; }
+  const payload = {
+    name, type: document.getElementById('env-type').value,
+    endpoint: document.getElementById('env-endpoint').value.trim(),
+    region: document.getElementById('env-region').value.trim()
+  };
+  try {
+    const r = await fetch(`/admin/customers/${CUST_ID}/environments`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+    const d = await r.json();
+    if (r.ok) { window.location.reload(); }
+    else { alert(d.detail || 'Error adding environment'); }
+  } catch(e) { alert('Network error'); }
+}
+
+async function removeEnv(envId) {
+  if (!confirm('Remove this environment?')) return;
+  try {
+    const r = await fetch(`/admin/customers/${CUST_ID}/environments/${envId}`, { method:'DELETE' });
+    if (r.ok) { document.getElementById('env-row-' + envId)?.remove(); }
+    else { alert('Error removing environment'); }
+  } catch(e) { alert('Network error'); }
+}
+
+// Team
+function showAddMemberModal() { document.getElementById('addMemberModal').style.display='block'; }
+function hideAddMemberModal() { document.getElementById('addMemberModal').style.display='none'; }
+
+async function addMember() {
+  const email = document.getElementById('member-email').value.trim();
+  if (!email) { alert('Email is required'); return; }
+  const payload = {
+    email, name: document.getElementById('member-name').value.trim(),
+    role: document.getElementById('member-role').value,
+    access_level: document.getElementById('member-access').value
+  };
+  try {
+    const r = await fetch(`/admin/customers/${CUST_ID}/team`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+    const d = await r.json();
+    if (r.ok) { window.location.reload(); }
+    else { alert(d.detail || 'Error inviting member'); }
+  } catch(e) { alert('Network error'); }
+}
+
+async function updateMemberAccess(memberId, level) {
+  try {
+    await fetch(`/admin/customers/${CUST_ID}/team/${memberId}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({access_level: level}) });
+  } catch(e) { console.error(e); }
+}
+
+async function removeMember(memberId) {
+  if (!confirm('Remove this team member?')) return;
+  try {
+    const r = await fetch(`/admin/customers/${CUST_ID}/team/${memberId}`, { method:'DELETE' });
+    if (r.ok) { document.getElementById('member-row-' + memberId)?.remove(); }
+    else { alert('Error removing member'); }
+  } catch(e) { alert('Network error'); }
+}
+
+// Integrations
+async function saveIntegration(type) {
+  let payload = {};
+  let statusId;
+  if (type === 'github') {
+    payload = { github_org: document.getElementById('int-github-org').value.trim() };
+    statusId = 'githubSaveStatus';
+  } else if (type === 'jira') {
+    payload = { jira_project_key: document.getElementById('int-jira-key').value.trim(), jira_url: document.getElementById('int-jira-url').value.trim() };
+    statusId = 'jiraSaveStatus';
+  } else if (type === 'slack') {
+    payload = { slack_webhook_url: document.getElementById('int-slack-webhook').value.trim() };
+    statusId = 'slackSaveStatus';
+  }
+  try {
+    const r = await fetch(`/admin/customers/${CUST_ID}/integrations`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+    if (r.ok) { showStatus(statusId, '✓ Saved'); }
+    else { const d = await r.json(); showStatus(statusId, d.detail || 'Error', false); }
+  } catch(e) { showStatus(statusId, 'Network error', false); }
+}
+</script>
+{% endblock %}

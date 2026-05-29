@@ -1,0 +1,184 @@
+{
+  "customers": [
+    {
+      "id": "cust_cf3c90df",
+      "slug": "acme-corp",
+      "name": "Acme Corp",
+      "description": "",
+      "industry": "",
+      "website": "",
+      "logo_url": "",
+      "contact_name": "",
+      "contact_email": "",
+      "contact_phone": "",
+      "plan": "growth",
+      "status": "active",
+      "created_at": "2026-05-21T06:03:15.635775",
+      "updated_at": "2026-05-21T06:03:15.635816",
+      "environments": [],
+      "team_members": [],
+      "integrations": {
+        "jira": {
+          "enabled": false,
+          "url": "",
+          "username": "",
+          "api_token": "",
+          "project_key": "",
+          "issue_type": "Bug",
+          "verified": false,
+          "last_verified": null,
+          "error": null
+        },
+        "github": {
+          "enabled": false,
+          "org": "",
+          "repo": "",
+          "token": "",
+          "default_branch": "main",
+          "verified": false,
+          "last_verified": null,
+          "error": null
+        },
+        "slack": {
+          "enabled": false,
+          "webhook_url": "",
+          "channel": "#incidents",
+          "bot_token": "",
+          "notify_on": [
+            "critical",
+            "high"
+          ],
+          "verified": false,
+          "last_verified": null,
+          "error": null
+        },
+        "llm": {
+          "enabled": false,
+          "provider": "openai",
+          "api_key": "",
+          "model": "gpt-4o",
+          "base_url": "",
+          "max_tokens": 4096,
+          "temperature": 0.2,
+          "verified": false,
+          "last_verified": null,
+          "error": null
+        },
+        "pagerduty": {
+          "enabled": false,
+          "api_key": "",
+          "service_id": "",
+          "escalation_policy_id": "",
+          "verified": false,
+          "last_verified": null,
+          "error": null
+        },
+        "datadog": {
+          "enabled": false,
+          "api_key": "",
+          "app_key": "",
+          "site": "datadoghq.com",
+          "verified": false,
+          "last_verified": null,
+          "error": null
+        }
+      },
+      "tags": [],
+      "notes": "",
+      "timezone": "UTC",
+      "incident_retention_days": 90,
+      "max_incidents_per_day": 500,
+      "alert_email": ""
+    },
+    {
+      "id": "cust_105939bf",
+      "slug": "beta-technologies",
+      "name": "Beta Technologies",
+      "description": "",
+      "industry": "",
+      "website": "",
+      "logo_url": "",
+      "contact_name": "",
+      "contact_email": "",
+      "contact_phone": "",
+      "plan": "growth",
+      "status": "active",
+      "created_at": "2026-05-21T06:08:10.485160",
+      "updated_at": "2026-05-21T06:08:10.485180",
+      "environments": [],
+      "team_members": [],
+      "integrations": {
+        "jira": {
+          "enabled": false,
+          "url": "",
+          "username": "",
+          "api_token": "",
+          "project_key": "",
+          "issue_type": "Bug",
+          "verified": false,
+          "last_verified": null,
+          "error": null
+        },
+        "github": {
+          "enabled": false,
+          "org": "",
+          "repo": "",
+          "token": "",
+          "default_branch": "main",
+          "verified": false,
+          "last_verified": null,
+          "error": null
+        },
+        "slack": {
+          "enabled": false,
+          "webhook_url": "",
+          "channel": "#incidents",
+          "bot_token": "",
+          "notify_on": [
+            "critical",
+            "high"
+          ],
+          "verified": false,
+          "last_verified": null,
+          "error": null
+        },
+        "llm": {
+          "enabled": false,
+          "provider": "openai",
+          "api_key": "",
+          "model": "gpt-4o",
+          "base_url": "",
+          "max_tokens": 4096,
+          "temperature": 0.2,
+          "verified": false,
+          "last_verified": null,
+          "error": null
+        },
+        "pagerduty": {
+          "enabled": false,
+          "api_key": "",
+          "service_id": "",
+          "escalation_policy_id": "",
+          "verified": false,
+          "last_verified": null,
+          "error": null
+        },
+        "datadog": {
+          "enabled": false,
+          "api_key": "",
+          "app_key": "",
+          "site": "datadoghq.com",
+          "verified": false,
+          "last_verified": null,
+          "error": null
+        }
+      },
+      "tags": [],
+      "notes": "",
+      "timezone": "UTC",
+      "incident_retention_days": 90,
+      "max_incidents_per_day": 500,
+      "alert_email": ""
+    }
+  ]
+}

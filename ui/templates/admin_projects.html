@@ -1,0 +1,440 @@
+{% extends "base.html" %}
+
+{% block title %}Projects — Prism Admin{% endblock %}
+{% block topbar_title %}Projects{% endblock %}
+
+{% block topbar_actions %}
+<button class="btn btn-primary btn-sm" id="topbarNewBtn">+ New Project</button>
+{% endblock %}
+
+{% block content %}
+<div class="page-content">
+
+  <!-- ── Tabs ── -->
+  <div class="tab-bar" style="margin-bottom:1.5rem">
+    <button class="tab-btn tab-btn--active" id="tabProjects" data-tab="projects">Projects</button>
+    <button class="tab-btn" id="tabCustomers" data-tab="customers">Customers</button>
+  </div>
+
+  <!-- ══════════════════════════ PROJECTS TAB ══════════════════════════ -->
+  <div id="panelProjects">
+
+    <!-- KPI Row -->
+    <div class="kpi-row">
+      <div class="kpi-card">
+        <div class="kpi-label">Total Projects</div>
+        <div class="kpi-value">8</div>
+        <div class="kpi-delta kpi-delta--up">+2 this month</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Active Repos</div>
+        <div class="kpi-value">23</div>
+        <div class="kpi-delta kpi-delta--up">+5</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Incidents (30d)</div>
+        <div class="kpi-value">147</div>
+        <div class="kpi-delta kpi-delta--down">-18%</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Avg MTTR</div>
+        <div class="kpi-value">42 min</div>
+        <div class="kpi-delta kpi-delta--down">-8 min</div>
+      </div>
+    </div>
+
+    <!-- Projects Grid -->
+    <div class="section-card">
+      <div class="section-header">
+        <h3 class="section-title">All Projects</h3>
+        <div class="section-actions">
+          <input type="search" class="input-search" id="projectSearch" placeholder="Search projects…" />
+          <select class="select-sm" id="statusFilter">
+            <option value="">All Status</option>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+          </select>
+        </div>
+      </div>
+      <div class="projects-grid" id="projectsGrid"></div>
+    </div>
+
+    <!-- New Project Modal -->
+    <div class="modal-backdrop" id="projectModal" style="display:none">
+      <div class="modal">
+        <div class="modal-header">
+          <h3 class="modal-title">New Project</h3>
+          <button class="modal-close" id="closeModal">✕</button>
+        </div>
+        <div class="modal-body">
+          <form id="projectForm" class="form-grid">
+            <div class="form-field">
+              <label class="form-label">Project Name *</label>
+              <input type="text" class="form-input" id="projName" placeholder="e.g. Payment Platform" required />
+            </div>
+            <div class="form-field">
+              <label class="form-label">Team</label>
+              <select class="form-input" id="projTeam">
+                <option value="">— Select team —</option>
+                <option>Platform Engineering</option>
+                <option>Backend Services</option>
+                <option>Data Engineering</option>
+                <option>Frontend</option>
+              </select>
+            </div>
+            <div class="form-field">
+              <label class="form-label">GitHub Repository</label>
+              <input type="text" class="form-input" id="projRepo" placeholder="org/repo-name" />
+            </div>
+            <div class="form-field">
+              <label class="form-label">Jira Project Key</label>
+              <input type="text" class="form-input" id="projJira" placeholder="e.g. PAY" />
+            </div>
+            <div class="form-field form-field--full">
+              <label class="form-label">Description</label>
+              <textarea class="form-input form-textarea" id="projDesc" placeholder="Brief description…" rows="3"></textarea>
+            </div>
+            <div class="form-field form-field--full">
+              <label class="form-label">Severity Threshold</label>
+              <div class="radio-group">
+                <label class="radio-label"><input type="radio" name="severity" value="critical" /> Critical only</label>
+                <label class="radio-label"><input type="radio" name="severity" value="high" checked /> High & above</label>
+                <label class="radio-label"><input type="radio" name="severity" value="medium" /> Medium & above</label>
+                <label class="radio-label"><input type="radio" name="severity" value="all" /> All</label>
+              </div>
+            </div>
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" id="cancelModal">Cancel</button>
+          <button class="btn btn-primary" id="saveProject">Create Project</button>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /panelProjects -->
+
+  <!-- ══════════════════════════ CUSTOMERS TAB ══════════════════════════ -->
+  <div id="panelCustomers" style="display:none">
+
+    <!-- KPI Row -->
+    <div class="kpi-row">
+      <div class="kpi-card">
+        <div class="kpi-label">Total Customers</div>
+        <div class="kpi-value">12</div>
+        <div class="kpi-delta kpi-delta--up">+3 this quarter</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Active SLAs</div>
+        <div class="kpi-value">9</div>
+        <div class="kpi-delta kpi-delta--up">75%</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">SLA Breaches (30d)</div>
+        <div class="kpi-value">2</div>
+        <div class="kpi-delta kpi-delta--down">-3</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Avg Uptime</div>
+        <div class="kpi-value">99.7%</div>
+        <div class="kpi-delta kpi-delta--up">+0.1%</div>
+      </div>
+    </div>
+
+    <!-- Customer Table -->
+    <div class="section-card">
+      <div class="section-header">
+        <h3 class="section-title">All Customers</h3>
+        <div class="section-actions">
+          <input type="search" class="input-search" id="customerSearch" placeholder="Search customers…" />
+          <select class="select-sm" id="tierFilter">
+            <option value="">All Tiers</option>
+            <option value="enterprise">Enterprise</option>
+            <option value="pro">Pro</option>
+            <option value="starter">Starter</option>
+          </select>
+          <select class="select-sm" id="slaFilter">
+            <option value="">All SLA</option>
+            <option value="met">Met</option>
+            <option value="at-risk">At Risk</option>
+            <option value="breached">Breached</option>
+          </select>
+        </div>
+      </div>
+      <div class="table-wrapper">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Customer</th>
+              <th>Tier</th>
+              <th>Contact</th>
+              <th>Projects</th>
+              <th>Uptime (30d)</th>
+              <th>SLA Status</th>
+              <th>Since</th>
+              <th class="col-actions">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="customersTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- New Customer Modal -->
+    <div class="modal-backdrop" id="customerModal" style="display:none">
+      <div class="modal">
+        <div class="modal-header">
+          <h3 class="modal-title">New Customer</h3>
+          <button class="modal-close" id="closeCustomerModal">✕</button>
+        </div>
+        <div class="modal-body">
+          <form id="customerForm" class="form-grid">
+            <div class="form-field">
+              <label class="form-label">Company Name *</label>
+              <input type="text" class="form-input" id="custName" placeholder="e.g. Acme Corp" required />
+            </div>
+            <div class="form-field">
+              <label class="form-label">Tier</label>
+              <select class="form-input" id="custTier">
+                <option value="starter">Starter</option>
+                <option value="pro" selected>Pro</option>
+                <option value="enterprise">Enterprise</option>
+              </select>
+            </div>
+            <div class="form-field">
+              <label class="form-label">Primary Contact Name</label>
+              <input type="text" class="form-input" id="custContact" placeholder="Jane Smith" />
+            </div>
+            <div class="form-field">
+              <label class="form-label">Contact Email</label>
+              <input type="email" class="form-input" id="custEmail" placeholder="jane@acme.com" />
+            </div>
+            <div class="form-field form-field--full">
+              <label class="form-label">SLA Target (%)</label>
+              <input type="number" class="form-input" id="custSla" min="90" max="100" step="0.1" value="99.5" />
+            </div>
+            <div class="form-field form-field--full">
+              <label class="form-label">Assign Projects</label>
+              <div class="checkbox-group" id="custProjects">
+                <label class="checkbox-label"><input type="checkbox" value="1" /> Payment Platform</label>
+                <label class="checkbox-label"><input type="checkbox" value="2" /> Order Management</label>
+                <label class="checkbox-label"><input type="checkbox" value="4" /> Customer Portal</label>
+                <label class="checkbox-label"><input type="checkbox" value="6" /> Auth & Identity</label>
+              </div>
+            </div>
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" id="cancelCustomerModal">Cancel</button>
+          <button class="btn btn-primary" id="saveCustomer">Add Customer</button>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /panelCustomers -->
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  "use strict";
+  const $ = id => document.getElementById(id);
+
+  /* ── Tab logic ── */
+  let activeTab = "projects";
+  const topbarBtn = $("topbarNewBtn");
+
+  function switchTab(tab) {
+    activeTab = tab;
+    $("panelProjects").style.display  = tab === "projects"  ? "" : "none";
+    $("panelCustomers").style.display = tab === "customers" ? "" : "none";
+    $("tabProjects").classList.toggle("tab-btn--active",  tab === "projects");
+    $("tabCustomers").classList.toggle("tab-btn--active", tab === "customers");
+    topbarBtn.textContent = tab === "projects" ? "+ New Project" : "+ New Customer";
+  }
+
+  $("tabProjects").addEventListener("click",  () => switchTab("projects"));
+  $("tabCustomers").addEventListener("click", () => switchTab("customers"));
+
+  topbarBtn.addEventListener("click", () => {
+    if (activeTab === "projects")  $("projectModal").style.display  = "flex";
+    else                           $("customerModal").style.display = "flex";
+  });
+
+  /* ════════════════ PROJECTS ════════════════ */
+  const PROJECTS = [
+    { id:1, name:"Payment Platform",      team:"Platform Engineering", repos:4, incidents:42, mttr:38, status:"active",   health:"good",    jira:"PAY",  created:"2025-01-10" },
+    { id:2, name:"Order Management",      team:"Backend Services",     repos:3, incidents:31, mttr:52, status:"active",   health:"warning", jira:"ORD",  created:"2025-02-14" },
+    { id:3, name:"Inventory Service",     team:"Backend Services",     repos:2, incidents:28, mttr:67, status:"active",   health:"danger",  jira:"INV",  created:"2025-03-01" },
+    { id:4, name:"Customer Portal",       team:"Frontend",             repos:5, incidents:15, mttr:22, status:"active",   health:"good",    jira:"CP",   created:"2025-03-20" },
+    { id:5, name:"Data Pipeline",         team:"Data Engineering",     repos:6, incidents:18, mttr:44, status:"active",   health:"good",    jira:"DATA", created:"2025-04-05" },
+    { id:6, name:"Auth & Identity",       team:"Platform Engineering", repos:2, incidents:7,  mttr:15, status:"active",   health:"good",    jira:"AUTH", created:"2025-04-18" },
+    { id:7, name:"Notification Service",  team:"Backend Services",     repos:1, incidents:4,  mttr:12, status:"active",   health:"good",    jira:"NOTIF",created:"2025-05-01" },
+    { id:8, name:"Legacy CRM Adapter",    team:"Backend Services",     repos:0, incidents:2,  mttr:90, status:"inactive", health:"warning", jira:"CRM",  created:"2024-08-01" },
+  ];
+
+  function healthBadge(h) {
+    const cls  = { good:"badge--success", warning:"badge--warning", danger:"badge--danger" };
+    const icon = { good:"✓", warning:"⚠", danger:"✕" };
+    return `<span class="badge ${cls[h]||"badge--neutral"}">${icon[h]||""} ${h}</span>`;
+  }
+
+  function renderProjects(list) {
+    const grid = $("projectsGrid");
+    if (!list.length) { grid.innerHTML = `<div class="empty-state"><p>No projects found.</p></div>`; return; }
+    grid.innerHTML = list.map(p => `
+      <div class="project-card" data-status="${p.status}">
+        <div class="project-card-header">
+          <div class="project-icon">${p.name.slice(0,2).toUpperCase()}</div>
+          <div class="project-meta">
+            <div class="project-name">${p.name}</div>
+            <div class="project-team text-muted">${p.team}</div>
+          </div>
+          <div class="project-health">${healthBadge(p.health)}</div>
+        </div>
+        <div class="project-stats">
+          <div class="proj-stat"><span class="proj-stat-val">${p.repos}</span><span class="proj-stat-lbl">Repos</span></div>
+          <div class="proj-stat"><span class="proj-stat-val">${p.incidents}</span><span class="proj-stat-lbl">Incidents</span></div>
+          <div class="proj-stat"><span class="proj-stat-val">${p.mttr}m</span><span class="proj-stat-lbl">MTTR</span></div>
+          <div class="proj-stat"><span class="proj-stat-val">${p.jira}</span><span class="proj-stat-lbl">Jira Key</span></div>
+        </div>
+        <div class="project-card-footer">
+          <span class="text-muted" style="font-size:0.75rem">Created ${p.created}</span>
+          <div class="project-actions">
+            <button class="btn btn-xs btn-ghost" title="Edit">✏</button>
+            <button class="btn btn-xs btn-ghost" title="View incidents">🔎</button>
+            <button class="btn btn-xs btn-ghost" title="${p.status==='active'?'Deactivate':'Activate'}">${p.status==='active'?'⏸':'▶'}</button>
+          </div>
+        </div>
+      </div>
+    `).join("");
+  }
+
+  function applyProjectFilters() {
+    const q  = ($("projectSearch").value || "").toLowerCase();
+    const st = $("statusFilter").value;
+    const filtered = PROJECTS.filter(p => {
+      if (st && p.status !== st) return false;
+      if (q  && !p.name.toLowerCase().includes(q) && !p.team.toLowerCase().includes(q)) return false;
+      return true;
+    });
+    renderProjects(filtered);
+  }
+
+  function initProjectModal() {
+    const modal = $("projectModal");
+    $("closeModal").addEventListener("click",  () => modal.style.display = "none");
+    $("cancelModal").addEventListener("click", () => modal.style.display = "none");
+    modal.addEventListener("click", e => { if (e.target === modal) modal.style.display = "none"; });
+    $("saveProject").addEventListener("click", () => {
+      const name = $("projName").value.trim();
+      if (!name) { $("projName").focus(); return; }
+      alert(`Project "${name}" created! (demo)`);
+      modal.style.display = "none";
+      $("projectForm").reset();
+    });
+  }
+
+  /* ════════════════ CUSTOMERS ════════════════ */
+  const CUSTOMERS = [
+    { id:1,  name:"Acme Corp",          contact:"Jane Smith",    email:"jane@acme.com",       tier:"enterprise", projects:4, uptime:99.9, sla:"met",      since:"2023-06-01" },
+    { id:2,  name:"GlobalTech Ltd",     contact:"Mark Torres",   email:"mark@globaltech.io",  tier:"enterprise", projects:3, uptime:99.7, sla:"met",      since:"2023-09-15" },
+    { id:3,  name:"RetailCo",           contact:"Lisa Green",    email:"lisa@retailco.com",   tier:"pro",        projects:2, uptime:99.4, sla:"at-risk",  since:"2024-01-20" },
+    { id:4,  name:"FinanceHub",         contact:"Omar Ali",      email:"omar@financehub.io",  tier:"enterprise", projects:3, uptime:99.8, sla:"met",      since:"2023-11-01" },
+    { id:5,  name:"Startup XYZ",        contact:"Priya Nair",    email:"priya@xyz.dev",       tier:"starter",    projects:1, uptime:98.1, sla:"breached", since:"2024-03-10" },
+    { id:6,  name:"MedSystems Inc",     contact:"Tom Baker",     email:"tom@medsys.com",      tier:"pro",        projects:2, uptime:99.6, sla:"met",      since:"2024-02-14" },
+    { id:7,  name:"EduLearn Platform",  contact:"Amy Chen",      email:"amy@edulearn.com",    tier:"pro",        projects:2, uptime:99.2, sla:"at-risk",  since:"2024-04-05" },
+    { id:8,  name:"LogiFlow",           contact:"Dan Park",      email:"dan@logiflow.com",    tier:"enterprise", projects:3, uptime:99.9, sla:"met",      since:"2023-07-22" },
+    { id:9,  name:"CloudBase",          contact:"Sara Webb",     email:"sara@cloudbase.io",   tier:"starter",    projects:1, uptime:97.5, sla:"breached", since:"2024-05-01" },
+    { id:10, name:"BankEasy",           contact:"Raj Patel",     email:"raj@bankeasy.com",    tier:"enterprise", projects:4, uptime:99.9, sla:"met",      since:"2023-04-18" },
+    { id:11, name:"HealthTrack",        contact:"Nina Ross",     email:"nina@healthtrack.io", tier:"pro",        projects:2, uptime:99.7, sla:"met",      since:"2024-01-08" },
+    { id:12, name:"ShopEasy",           contact:"Leo Chan",      email:"leo@shopeasy.com",    tier:"starter",    projects:1, uptime:99.0, sla:"met",      since:"2024-06-01" },
+  ];
+
+  const TIER_CLS = { enterprise:"badge--warning", pro:"badge--info", starter:"badge--neutral" };
+  const SLA_CLS  = { met:"badge--success", "at-risk":"badge--warning", breached:"badge--danger" };
+  const SLA_ICON = { met:"✓", "at-risk":"⚠", breached:"✕" };
+
+  function renderCustomers(list) {
+    $("customersTableBody").innerHTML = !list.length
+      ? `<tr><td colspan="8" class="text-muted" style="text-align:center;padding:2rem">No customers found.</td></tr>`
+      : list.map(c => `
+      <tr>
+        <td>
+          <div style="display:flex;align-items:center;gap:10px">
+            <div class="customer-avatar">${c.name.slice(0,2).toUpperCase()}</div>
+            <div>
+              <div><strong>${c.name}</strong></div>
+              <div class="text-muted" style="font-size:0.75rem">${c.email}</div>
+            </div>
+          </div>
+        </td>
+        <td><span class="badge ${TIER_CLS[c.tier]||'badge--neutral'}">${c.tier}</span></td>
+        <td class="text-muted">${c.contact}</td>
+        <td>${c.projects}</td>
+        <td>
+          <div style="display:flex;align-items:center;gap:6px">
+            <div class="uptime-bar"><div class="uptime-fill" style="width:${Math.min(c.uptime,100)}%"></div></div>
+            <span style="font-size:0.78rem">${c.uptime}%</span>
+          </div>
+        </td>
+        <td><span class="badge ${SLA_CLS[c.sla]||'badge--neutral'}">${SLA_ICON[c.sla]||''} ${c.sla}</span></td>
+        <td class="text-muted">${c.since}</td>
+        <td class="col-actions">
+          <button class="btn btn-xs btn-ghost" title="Edit">✏</button>
+          <button class="btn btn-xs btn-ghost" title="View SLA report">📊</button>
+          <button class="btn btn-xs btn-ghost" title="Contact" style="color:var(--accent)">✉</button>
+        </td>
+      </tr>
+    `).join("");
+  }
+
+  function applyCustomerFilters() {
+    const q    = ($("customerSearch").value || "").toLowerCase();
+    const tier = $("tierFilter").value;
+    const sla  = $("slaFilter").value;
+    const filtered = CUSTOMERS.filter(c => {
+      if (tier && c.tier !== tier) return false;
+      if (sla  && c.sla  !== sla)  return false;
+      if (q && !c.name.toLowerCase().includes(q) && !c.contact.toLowerCase().includes(q)) return false;
+      return true;
+    });
+    renderCustomers(filtered);
+  }
+
+  function initCustomerModal() {
+    const modal = $("customerModal");
+    $("closeCustomerModal").addEventListener("click",  () => modal.style.display = "none");
+    $("cancelCustomerModal").addEventListener("click", () => modal.style.display = "none");
+    modal.addEventListener("click", e => { if (e.target === modal) modal.style.display = "none"; });
+    $("saveCustomer").addEventListener("click", () => {
+      const name = $("custName").value.trim();
+      if (!name) { $("custName").focus(); return; }
+      alert(`Customer "${name}" added! (demo)`);
+      modal.style.display = "none";
+      $("customerForm").reset();
+    });
+  }
+
+  /* ════════════════ INIT ════════════════ */
+  function init() {
+    renderProjects(PROJECTS);
+    $("projectSearch").addEventListener("input",  applyProjectFilters);
+    $("statusFilter").addEventListener("change",  applyProjectFilters);
+    initProjectModal();
+
+    renderCustomers(CUSTOMERS);
+    $("customerSearch").addEventListener("input",  applyCustomerFilters);
+    $("tierFilter").addEventListener("change",     applyCustomerFilters);
+    $("slaFilter").addEventListener("change",      applyCustomerFilters);
+    initCustomerModal();
+  }
+
+  document.readyState === "loading"
+    ? document.addEventListener("DOMContentLoaded", init)
+    : init();
+})();
+</script>
+{% endblock %}

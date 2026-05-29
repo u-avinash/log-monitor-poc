@@ -1,0 +1,262 @@
+{% extends "base.html" %}
+
+{% block title %}{{ inc.incident_id }} — Prism{% endblock %}
+{% block topbar_title %}Incident Detail{% endblock %}
+
+{% block topbar_actions %}
+<a href="/incidents" class="btn btn-ghost btn-sm">← Back</a>
+{% if inc.status not in ('COMPLETED', 'PR_CREATED') %}
+<form method="post" action="/api/incidents/{{ inc.incident_id }}/trigger" style="display:inline;" id="triggerForm">
+  <button class="btn btn-secondary btn-sm" type="button" id="triggerBtn"
+          data-incident="{{ inc.incident_id }}">⚡ Re-trigger</button>
+</form>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+
+<!-- ── Header row ─────────────────────────────────────────────────────── -->
+<div class="page-header">
+  <div style="flex:1; min-width:0;">
+    <div style="display:flex; align-items:center; gap:var(--space-3); flex-wrap:wrap; margin-bottom:var(--space-2);">
+      <span class="badge {{ inc.severity | severity_badge }}">{{ inc.severity or '—' }}</span>
+      <span class="badge {{ inc.status | status_badge }}">{{ (inc.status or 'UNKNOWN').replace('_',' ') }}</span>
+      {% if inc.approval_status == 'pending' %}
+      <span class="badge badge-warning">Needs Approval</span>
+      {% elif inc.approval_status == 'approved' %}
+      <span class="badge badge-success">Approved</span>
+      {% elif inc.approval_status == 'rejected' %}
+      <span class="badge badge-error">Rejected</span>
+      {% endif %}
+    </div>
+    <h1 class="page-title" style="font-size:var(--text-xl);">
+      {{ inc.error_title or 'Untitled Incident' }}
+    </h1>
+    <p class="page-subtitle">
+      {{ inc.incident_id }}
+      &nbsp;·&nbsp; {{ inc.app_name }}
+      &nbsp;·&nbsp; {{ inc.created_at | fmt_dt }}
+      {% if inc.repo_full_name %}
+      &nbsp;·&nbsp; {{ inc.repo_full_name }}
+      {% endif %}
+    </p>
+  </div>
+  <div style="display:flex; gap:var(--space-2); flex-shrink:0; flex-wrap:wrap;">
+    {% if inc.pr_url %}
+    <a href="{{ inc.pr_url }}" target="_blank" class="btn btn-success btn-sm">↗ View PR</a>
+    {% endif %}
+    {% if inc.jira_ticket_url %}
+    <a href="{{ inc.jira_ticket_url }}" target="_blank" class="btn btn-ghost btn-sm">↗ Jira</a>
+    {% endif %}
+  </div>
+</div>
+
+<!-- ── Workflow progress ───────────────────────────────────────────────── -->
+<div class="card" style="margin-bottom:var(--space-5);">
+  <div class="card-header">
+    <h2 class="card-title">Workflow Progress</h2>
+    <span class="badge {% if is_failed %}badge-error{% elif progress_pct == 100 %}badge-success{% else %}badge-info{% endif %}">
+      {{ progress_pct }}%
+    </span>
+  </div>
+  <div class="card-body">
+    <div class="progress-bar-track" style="height:8px; margin-bottom:var(--space-4);">
+      <div class="progress-bar-fill {% if is_failed %}progress-bar--error{% else %}progress-bar--info{% endif %}"
+           style="width:{{ progress_pct }}%;"></div>
+    </div>
+    <div class="workflow-steps">
+      {% for step in workflow_steps %}
+      <div class="workflow-step workflow-step--{{ step.state }}">
+        <div class="workflow-step-icon">
+          {% if step.state == 'completed' %}✓
+          {% elif step.state == 'active' %}◉
+          {% elif step.state == 'failed' %}✕
+          {% else %}○{% endif %}
+        </div>
+        <div class="workflow-step-label">{{ step.label }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    {% if current_node %}
+    <p style="margin-top:var(--space-3); font-size:var(--text-sm); color:var(--neutral-400);">
+      Current node: <code>{{ current_node }}</code>
+    </p>
+    {% endif %}
+  </div>
+</div>
+
+<!-- ── Tabs ────────────────────────────────────────────────────────────── -->
+<div class="tabs" id="detailTabs">
+  <button class="tab tab--active" data-tab="rca">Root Cause</button>
+  <button class="tab" data-tab="fix">Proposed Fix</button>
+  {% if diff_rows %}<button class="tab" data-tab="diff">Diff</button>{% endif %}
+  <button class="tab" data-tab="meta">Metadata</button>
+  {% if inc.status == 'PENDING_APPROVAL' or inc.approval_status == 'pending' %}
+  <button class="tab" data-tab="approval">Approval</button>
+  {% endif %}
+</div>
+
+<!-- Tab: Root Cause Analysis -->
+<div class="tab-panel tab-panel--active" data-panel="rca">
+  {% if inc.root_cause_analysis %}
+  <div class="card">
+    <div class="card-body prose-block">{{ inc.root_cause_analysis }}</div>
+  </div>
+  {% else %}
+  <div class="empty-state"><div class="empty-state-icon">🔬</div>
+    <div class="empty-state-title">RCA not yet generated</div></div>
+  {% endif %}
+</div>
+
+<!-- Tab: Proposed Fix -->
+<div class="tab-panel" data-panel="fix" hidden>
+  {% if inc.proposed_fix %}
+  <div class="card">
+    <div class="card-body prose-block">{{ inc.proposed_fix }}</div>
+  </div>
+  {% else %}
+  <div class="empty-state"><div class="empty-state-icon">🔧</div>
+    <div class="empty-state-title">Fix not yet generated</div></div>
+  {% endif %}
+</div>
+
+<!-- Tab: Diff viewer -->
+{% if diff_rows %}
+<div class="tab-panel" data-panel="diff" hidden>
+  <div class="card">
+    <div class="card-header"><h3 class="card-title">Patch Diff</h3></div>
+    <div class="card-body" style="padding:0; overflow:auto;">
+      <table class="diff-table">
+        <tbody>
+          {% for old_ln, new_ln, sign, text in diff_rows %}
+          <tr class="diff-row diff-row--{{ 'add' if sign == '+' else 'del' }}">
+            <td class="diff-ln">{{ old_ln or '' }}</td>
+            <td class="diff-ln">{{ new_ln or '' }}</td>
+            <td class="diff-sign">{{ sign }}</td>
+            <td class="diff-code"><code>{{ text }}</code></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- Tab: Metadata -->
+<div class="tab-panel" data-panel="meta" hidden>
+  <div class="card">
+    <div class="card-header"><h3 class="card-title">Incident Details</h3></div>
+    <div class="card-body">
+      <dl class="kv-list">
+        {% set meta_fields = [
+          ('Incident ID',      inc.incident_id),
+          ('App Name',         inc.app_name),
+          ('Severity',         inc.severity),
+          ('Status',           inc.status),
+          ('Approval Status',  inc.approval_status),
+          ('Repo',             inc.repo_full_name),
+          ('Branch',           inc.branch_name),
+          ('PR URL',           inc.pr_url),
+          ('Jira Ticket',      inc.jira_ticket_url),
+          ('Commit SHA',       inc.commit_sha),
+          ('Created At',       inc.created_at | fmt_dt),
+          ('Updated At',       inc.updated_at | fmt_dt),
+          ('Approved At',      inc.approved_at | fmt_dt),
+          ('Approval Notes',   inc.approval_notes),
+          ('Occurrences',      inc.occurrence_count),
+          ('Error Type',       inc.error_type),
+          ('Environment',      inc.environment),
+        ] %}
+        {% for label, value in meta_fields %}
+        {% if value %}
+        <div class="kv-row">
+          <dt class="kv-key">{{ label }}</dt>
+          <dd class="kv-value">
+            {% if value and (value | string).startswith('http') %}
+            <a href="{{ value }}" target="_blank" class="link">{{ value }}</a>
+            {% else %}
+            {{ value }}
+            {% endif %}
+          </dd>
+        </div>
+        {% endif %}
+        {% endfor %}
+      </dl>
+    </div>
+  </div>
+
+  {% if inc.error_message %}
+  <div class="card" style="margin-top:var(--space-4);">
+    <div class="card-header"><h3 class="card-title">Error Message</h3></div>
+    <div class="card-body"><pre class="code-block">{{ inc.error_message }}</pre></div>
+  </div>
+  {% endif %}
+
+  {% if inc.stack_trace %}
+  <div class="card" style="margin-top:var(--space-4);">
+    <div class="card-header"><h3 class="card-title">Stack Trace</h3></div>
+    <div class="card-body"><pre class="code-block">{{ inc.stack_trace }}</pre></div>
+  </div>
+  {% endif %}
+</div>
+
+<!-- Tab: Approval -->
+{% if inc.status == 'PENDING_APPROVAL' or inc.approval_status == 'pending' %}
+<div class="tab-panel" data-panel="approval" hidden>
+  <div class="card" style="max-width:520px;">
+    <div class="card-header"><h3 class="card-title">Review Fix & Approve</h3></div>
+    <div class="card-body">
+      <p style="color:var(--neutral-300); margin-bottom:var(--space-4); font-size:var(--text-sm);">
+        Approving will trigger patch generation, Jira ticket creation, and PR submission.
+        Rejecting will stop the workflow and mark the incident as rejected.
+      </p>
+
+      <form id="approvalForm" data-incident="{{ inc.incident_id }}">
+        <div class="form-group">
+          <label class="form-label" for="approvalNotes">Notes (optional)</label>
+          <textarea id="approvalNotes" name="notes" class="input" rows="3"
+                    placeholder="Add review notes…"></textarea>
+        </div>
+        <div style="display:flex; gap:var(--space-3); margin-top:var(--space-4);">
+          <button type="button" class="btn btn-success" id="approveBtn"
+                  data-action="approve" data-incident="{{ inc.incident_id }}">
+            ✓ Approve Fix
+          </button>
+          <button type="button" class="btn btn-danger" id="rejectBtn"
+                  data-action="reject" data-incident="{{ inc.incident_id }}">
+            ✕ Reject
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  // Live workflow polling for in-progress incidents
+  (function() {
+    const TERMINAL = ['COMPLETED','PR_CREATED','REJECTED','FAILED'];
+    const status = {{ (inc.status or '') | tojson }};
+    if (!TERMINAL.includes(status)) {
+      window.prism.startPolling(
+        '/api/incidents/{{ inc.incident_id }}',
+        8000,
+        function(data) {
+          // update badges
+          const st = (data.status || '').replace(/_/g,' ');
+          document.querySelectorAll('[data-status-badge]').forEach(el => el.textContent = st);
+          if (TERMINAL.includes(data.status)) {
+            window.prism.stopPolling();
+            window.prism.toast('Workflow complete: ' + st, 'success');
+          }
+        }
+      );
+    }
+  })();
+</script>
+{% endblock %}

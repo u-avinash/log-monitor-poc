@@ -129,7 +129,7 @@ class JiraClient:
                 "priority": {"name": priority},
                 "labels": [
                     "auto-generated",
-                    "log-monitor",
+                    "prism",
                     f"incident-{incident_id}",
                     f"app-{sanitized_app_name.lower().replace(' ', '-')}",
                     f"env-{sanitized_environment.lower()}",
@@ -185,7 +185,7 @@ class JiraClient:
             f"*Incident ID:* {incident_id}",
             f"*Application:* {app_name}",
             f"*Environment:* {environment}",
-            f"*Auto-detected by:* Log Monitor AI",
+            f"*Auto-detected by:* Prism AI",
             "",
             f"h2. Error Description",
             error_description,
@@ -225,7 +225,7 @@ class JiraClient:
         
         description_parts.extend([
             "----",
-            "_This ticket was automatically created by Log Monitor AI. Please review and verify the analysis._"
+            "_This ticket was automatically created by Prism AI. Please review and verify the analysis._"
         ])
         
         return "\n".join(description_parts)
@@ -423,7 +423,7 @@ class JiraClient:
             # Build JQL query
             jql_parts = [
                 f"project = {settings.jira_project_key}",
-                'labels = "log-monitor"'
+                'labels = "prism"'
             ]
             
             if app_name:

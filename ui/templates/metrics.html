@@ -1,0 +1,261 @@
+{% extends "base.html" %}
+
+{% block title %}Mule Metrics — Prism{% endblock %}
+{% block topbar_title %}Mule Metrics{% endblock %}
+
+{% block topbar_actions %}
+<span class="topbar-status">
+  <span class="status-dot status-dot--online"></span>
+  <span class="status-label">Collector Connected</span>
+</span>
+<select class="select-sm" id="metricEnvFilter">
+  <option value="">All environments</option>
+  {% for env in metrics_summary.environments %}
+  <option value="{{ env }}">{{ env }}</option>
+  {% endfor %}
+</select>
+<select class="select-sm" id="metricWindowFilter">
+  <option value="15m">15m</option>
+  <option value="1h" selected>1h</option>
+  <option value="6h">6h</option>
+  <option value="24h">24h</option>
+</select>
+<button class="btn btn-ghost btn-sm" id="exportMetricsBtn">↓ Export</button>
+{% endblock %}
+
+{% block content %}
+<div class="page-content metrics-page">
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Mule application metrics</h1>
+      <p class="page-subtitle">Monitor throughput, errors, latency, worker utilization and API traffic from OpenTelemetry signals.</p>
+    </div>
+  </div>
+
+  <div class="stats-grid metrics-stats-grid">
+    <div class="stat-card">
+      <div class="stat-card-label">Requests / min</div>
+      <div class="stat-card-value">{{ metrics_summary.requests_per_min }}</div>
+      <div class="stat-card-delta">Across selected applications</div>
+    </div>
+    <div class="stat-card stat-card--critical">
+      <div class="stat-card-label">Error Rate</div>
+      <div class="stat-card-value">{{ metrics_summary.error_rate }}%</div>
+      <div class="stat-card-delta">Across Mule APIs and flows</div>
+    </div>
+    <div class="stat-card stat-card--warning">
+      <div class="stat-card-label">P95 Latency</div>
+      <div class="stat-card-value">{{ metrics_summary.p95_latency_ms }} ms</div>
+      <div class="stat-card-delta">Measured via spans and requests</div>
+    </div>
+    <div class="stat-card stat-card--success">
+      <div class="stat-card-label">Worker CPU</div>
+      <div class="stat-card-value">{{ metrics_summary.worker_cpu }}%</div>
+      <div class="stat-card-delta">Average active workers</div>
+    </div>
+  </div>
+
+  <div class="metrics-layout">
+    <div class="card">
+      <div class="card-header">
+        <h2 class="card-title">Application performance snapshot</h2>
+      </div>
+      <div class="card-body" style="padding:0;">
+        <div class="table-wrapper">
+          <table class="data-table" id="metricsTable">
+            <thead>
+              <tr>
+                <th>Application</th>
+                <th>Environment</th>
+                <th>Requests/min</th>
+                <th>Error %</th>
+                <th>P95</th>
+                <th>CPU</th>
+                <th>Memory</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for metric in metrics_rows %}
+              <tr class="metric-row" data-env="{{ metric.environment }}">
+                <td>
+                  <div class="metric-name">{{ metric.app }}</div>
+                  <div class="metric-sub">{{ metric.api_name }}</div>
+                </td>
+                <td>{{ metric.environment }}</td>
+                <td>{{ metric.requests_per_min }}</td>
+                <td>{{ metric.error_rate }}%</td>
+                <td>{{ metric.p95_latency_ms }} ms</td>
+                <td>{{ metric.cpu }}%</td>
+                <td>{{ metric.memory }}%</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="metrics-side-stack">
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">Signals to add next</h2>
+        </div>
+        <div class="card-body">
+          <ul class="metrics-notes">
+            <li>Flow-level throughput and failure counters</li>
+            <li>Connector-specific errors by HTTP/JMS/DB/Salesforce/MQ</li>
+            <li>Deployment version trend overlay</li>
+            <li>SLO tracking for latency and availability</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">Top error-producing apps</h2>
+        </div>
+        <div class="card-body">
+          <div class="metrics-highlight-list">
+            {% for item in top_error_apps %}
+            <div class="metrics-highlight">
+              <strong>{{ item.app }}</strong>
+              <span>{{ item.error_rate }}% errors · {{ item.environment }}</span>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  .metrics-page {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .metrics-stats-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .metrics-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.8fr) minmax(280px, .85fr);
+    gap: 1rem;
+    align-items: start;
+  }
+
+  .metrics-side-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .metric-name {
+    font-weight: 700;
+  }
+
+  .metric-sub {
+    font-size: .82rem;
+    color: var(--text-muted, #6b7280);
+    margin-top: .15rem;
+  }
+
+  .metrics-notes {
+    margin: 0;
+    padding-left: 1rem;
+    display: grid;
+    gap: .45rem;
+    color: var(--text-muted, #6b7280);
+  }
+
+  .metrics-highlight-list {
+    display: grid;
+    gap: .75rem;
+  }
+
+  .metrics-highlight {
+    display: flex;
+    justify-content: space-between;
+    gap: .5rem;
+    font-size: .92rem;
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 12px;
+    padding: .75rem .85rem;
+  }
+
+  .metrics-highlight span {
+    color: var(--text-muted, #6b7280);
+    text-align: right;
+  }
+
+  @media (max-width: 1024px) {
+    .metrics-stats-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .metrics-layout {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .metrics-stats-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .metrics-highlight {
+      flex-direction: column;
+    }
+
+    .metrics-highlight span {
+      text-align: left;
+    }
+  }
+</style>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (function() {
+    const envFilter = document.getElementById('metricEnvFilter');
+    const rows = Array.from(document.querySelectorAll('.metric-row'));
+    const exportBtn = document.getElementById('exportMetricsBtn');
+
+    function applyFilters() {
+      const env = envFilter ? envFilter.value : '';
+      rows.forEach(function(row) {
+        row.hidden = !!env && row.dataset.env !== env;
+      });
+    }
+
+    function exportMetrics() {
+      const visibleRows = rows.filter(function(row) { return !row.hidden; });
+      const lines = ['app,environment,requests_per_min,error_rate,p95_latency_ms,cpu,memory'];
+      visibleRows.forEach(function(row) {
+        const cols = row.querySelectorAll('td');
+        const app = cols[0].querySelector('.metric-name').textContent.trim();
+        const env = cols[1].textContent.trim();
+        const rpm = cols[2].textContent.trim();
+        const err = cols[3].textContent.trim();
+        const p95 = cols[4].textContent.trim();
+        const cpu = cols[5].textContent.trim();
+        const memory = cols[6].textContent.trim();
+        lines.push([app, env, rpm, err, p95, cpu, memory].join(','));
+      });
+
+      const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = 'mule-metrics.csv';
+      link.click();
+    }
+
+    if (envFilter) envFilter.addEventListener('change', applyFilters);
+    if (exportBtn) exportBtn.addEventListener('click', exportMetrics);
+  })();
+</script>
+{% endblock %}

@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Prism — Sign In</title>
+  <link rel="stylesheet" href="/static/components.css" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #0a0e1a;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      overflow: hidden;
+    }
+
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background:
+        radial-gradient(ellipse 80% 60% at 20% 40%, rgba(99,102,241,0.12) 0%, transparent 60%),
+        radial-gradient(ellipse 60% 50% at 80% 70%, rgba(16,185,129,0.08) 0%, transparent 60%);
+      pointer-events: none;
+    }
+
+    body::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(99,102,241,0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(99,102,241,0.04) 1px, transparent 1px);
+      background-size: 48px 48px;
+      pointer-events: none;
+    }
+
+    .login-wrapper {
+      position: relative;
+      z-index: 10;
+      width: 100%;
+      max-width: 440px;
+      padding: 24px;
+    }
+
+    .brand {
+      text-align: center;
+      margin-bottom: 32px;
+    }
+    .brand-logo {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .brand-icon {
+      width: 48px; height: 48px;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      border-radius: 14px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 24px;
+      box-shadow: 0 0 24px rgba(99,102,241,0.4);
+    }
+    .brand-name {
+      font-size: 28px;
+      font-weight: 700;
+      background: linear-gradient(135deg, #e2e8f0, #a5b4fc);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      letter-spacing: -0.5px;
+    }
+    .brand-tagline {
+      color: #64748b;
+      font-size: 13px;
+      letter-spacing: 0.3px;
+    }
+
+    .login-card {
+      background: rgba(15, 20, 40, 0.90);
+      border: 1px solid rgba(99,102,241,0.25);
+      border-radius: 20px;
+      padding: 36px;
+      backdrop-filter: blur(20px);
+      box-shadow:
+        0 24px 48px rgba(0,0,0,0.5),
+        0 0 0 1px rgba(255,255,255,0.03) inset;
+    }
+
+    .card-title {
+      font-size: 20px;
+      font-weight: 700;
+      color: #f1f5f9;
+      margin-bottom: 4px;
+    }
+    .card-subtitle {
+      font-size: 13px;
+      color: #64748b;
+      margin-bottom: 28px;
+    }
+
+    /* Role selector tabs */
+    .role-tabs {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 24px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(99,102,241,0.15);
+      border-radius: 12px;
+      padding: 5px;
+    }
+    .role-tab {
+      flex: 1;
+      padding: 8px 6px;
+      border: none;
+      border-radius: 8px;
+      background: transparent;
+      color: #64748b;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-align: center;
+      letter-spacing: 0.2px;
+    }
+    .role-tab:hover { color: #94a3b8; background: rgba(255,255,255,0.05); }
+    .role-tab.active {
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      color: #fff;
+      font-weight: 600;
+      box-shadow: 0 2px 8px rgba(99,102,241,0.35);
+    }
+    .role-tab.active.tab-team-admin {
+      background: linear-gradient(135deg, #0ea5e9, #6366f1);
+    }
+    .role-tab.active.tab-user {
+      background: linear-gradient(135deg, #10b981, #0ea5e9);
+    }
+
+    .form-group { margin-bottom: 18px; }
+    .form-label {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 8px;
+    }
+    .input-wrapper { position: relative; }
+    .input-icon {
+      position: absolute;
+      left: 14px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: #475569;
+      font-size: 16px;
+      pointer-events: none;
+    }
+    .form-input {
+      width: 100%;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(99,102,241,0.2);
+      border-radius: 10px;
+      color: #e2e8f0;
+      font-size: 14px;
+      padding: 12px 14px 12px 42px;
+      transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
+      outline: none;
+    }
+    .form-input::placeholder { color: #475569; }
+    .form-input:focus {
+      border-color: rgba(99,102,241,0.6);
+      background: rgba(99,102,241,0.07);
+      box-shadow: 0 0 0 3px rgba(99,102,241,0.12);
+    }
+
+    .alert-error {
+      background: rgba(239,68,68,0.1);
+      border: 1px solid rgba(239,68,68,0.3);
+      border-radius: 10px;
+      padding: 12px 16px;
+      color: #fca5a5;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 20px;
+    }
+
+    .btn-login {
+      width: 100%;
+      padding: 13px;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      border: none;
+      border-radius: 10px;
+      color: #fff;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      box-shadow: 0 4px 16px rgba(99,102,241,0.35);
+      margin-top: 8px;
+      letter-spacing: 0.3px;
+    }
+    .btn-login:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 24px rgba(99,102,241,0.5);
+    }
+    .btn-login:active { transform: translateY(0); }
+
+    /* Credentials hints */
+    .credentials-section {
+      margin-top: 24px;
+    }
+    .cred-block {
+      display: none;
+      padding: 14px 16px;
+      border-radius: 10px;
+      margin-bottom: 0;
+    }
+    .cred-block.active { display: block; }
+
+    .cred-block--admin {
+      background: rgba(99,102,241,0.08);
+      border: 1px solid rgba(99,102,241,0.2);
+    }
+    .cred-block--team-admin {
+      background: rgba(14,165,233,0.08);
+      border: 1px solid rgba(14,165,233,0.2);
+    }
+    .cred-block--user {
+      background: rgba(16,185,129,0.08);
+      border: 1px solid rgba(16,185,129,0.2);
+    }
+
+    .hint-title {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .cred-block--admin .hint-title { color: #a5b4fc; }
+    .cred-block--team-admin .hint-title { color: #7dd3fc; }
+    .cred-block--user .hint-title { color: #6ee7b7; }
+
+    .hint-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      color: #64748b;
+      margin-bottom: 6px;
+    }
+    .hint-row:last-child { margin-bottom: 0; }
+    .hint-val {
+      font-family: 'Courier New', monospace;
+      color: #e2e8f0;
+      background: rgba(255,255,255,0.07);
+      padding: 2px 10px;
+      border-radius: 5px;
+      font-size: 12px;
+    }
+
+    .login-footer {
+      text-align: center;
+      margin-top: 20px;
+      color: #334155;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="login-wrapper">
+
+    <div class="brand">
+      <div class="brand-logo">
+        <div class="brand-icon">⬡</div>
+        <span class="brand-name">Prism</span>
+      </div>
+      <p class="brand-tagline">Intelligent Log Monitoring & Incident Intelligence</p>
+    </div>
+
+    <div class="login-card">
+      <h1 class="card-title">Welcome back</h1>
+      <p class="card-subtitle">Select your role and sign in to continue</p>
+
+      <!-- Role Tabs -->
+      <div class="role-tabs" id="roleTabs">
+        <button type="button" class="role-tab tab-admin" data-role="admin" onclick="selectRole('admin')">🛡 Admin</button>
+        <button type="button" class="role-tab tab-team-admin" data-role="team_admin" onclick="selectRole('team_admin')">👥 Team Admin</button>
+        <button type="button" class="role-tab tab-user active" data-role="user" onclick="selectRole('user')">👤 User</button>
+      </div>
+
+      {% if error %}
+      <div class="alert-error">
+        <span>⚠</span>
+        <span>{{ error }}</span>
+      </div>
+      {% endif %}
+
+      <form method="POST" action="/login" id="loginForm">
+        <input type="hidden" name="role_hint" id="roleHintInput" value="user" />
+
+        <div class="form-group">
+          <label class="form-label" for="username">Username</label>
+          <div class="input-wrapper">
+            <span class="input-icon">👤</span>
+            <input
+              id="username"
+              name="username"
+              type="text"
+              class="form-input"
+              placeholder="Enter your username"
+              value="{{ username or '' }}"
+              autocomplete="username"
+              required
+            />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="password">Password</label>
+          <div class="input-wrapper">
+            <span class="input-icon">🔒</span>
+            <input
+              id="password"
+              name="password"
+              type="password"
+              class="form-input"
+              placeholder="Enter your password"
+              autocomplete="current-password"
+              required
+            />
+          </div>
+        </div>
+
+        <button type="submit" class="btn-login" id="signInBtn">Sign In →</button>
+      </form>
+
+      <!-- Credentials Hints per role -->
+      <div class="credentials-section">
+        <div class="cred-block cred-block--admin" id="cred-admin">
+          <div class="hint-title">🛡 Admin Credentials</div>
+          <div class="hint-row"><span>Username</span><span class="hint-val">admin</span></div>
+          <div class="hint-row"><span>Password</span><span class="hint-val">admin123</span></div>
+        </div>
+        <div class="cred-block cred-block--team-admin" id="cred-team-admin">
+          <div class="hint-title">👥 Team Admin Credentials</div>
+          <div class="hint-row"><span>Username</span><span class="hint-val">u_avinash</span></div>
+          <div class="hint-row"><span>Password</span><span class="hint-val">admin123</span></div>
+        </div>
+        <div class="cred-block cred-block--user active" id="cred-user">
+          <div class="hint-title">👤 User Credentials</div>
+          <div class="hint-row"><span>Username</span><span class="hint-val">testuser</span></div>
+          <div class="hint-row"><span>Password</span><span class="hint-val">test123</span></div>
+          <div class="hint-row" style="margin-top:6px; color:#475569; font-size:11px;">Team Admin & Admin can also log in as User</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="login-footer">© 2025 Prism — Incident Intelligence Platform</div>
+  </div>
+
+  <script>
+    function selectRole(role) {
+      // Update tab states
+      document.querySelectorAll('.role-tab').forEach(t => t.classList.remove('active'));
+      const activeTab = document.querySelector('[data-role="' + role + '"]');
+      if (activeTab) activeTab.classList.add('active');
+
+      // Update hidden input
+      document.getElementById('roleHintInput').value = role;
+
+      // Update credential hints
+      document.querySelectorAll('.cred-block').forEach(b => b.classList.remove('active'));
+      const credMap = { admin: 'cred-admin', team_admin: 'cred-team-admin', user: 'cred-user' };
+      const credId = credMap[role];
+      if (credId) document.getElementById(credId).classList.add('active');
+
+      // Pre-fill username based on role
+      const defaults = { admin: 'admin', team_admin: 'u_avinash', user: 'testuser' };
+      const usernameEl = document.getElementById('username');
+      if (!usernameEl.value || Object.values(defaults).includes(usernameEl.value)) {
+        usernameEl.value = defaults[role] || '';
+      }
+    }
+
+    // Init with User selected by default
+    selectRole('user');
+  </script>
+</body>
+</html>

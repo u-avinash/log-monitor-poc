@@ -26,12 +26,15 @@ class Settings(BaseSettings):
     llm_model: str = "gpt-4o"
     llm_temperature: float = 0.2
     llm_max_tokens: int = 4096
+    integration_secret_key: Optional[str] = None
+    integration_secret_key_file: str = "./data/.integration.key"
 
     # LLM fallback (used when primary provider is rate-limited / quota exhausted)
     llm_fallback_provider: str = "openai"
     llm_fallback_model: str = "gpt-4o-mini"
     
     # OpenTelemetry & Ingestion
+    otlp_collector_port: int = 4318
     otlp_endpoint: str = "http://localhost:4318/v1/logs"
     ingestion_api_host: str = "0.0.0.0"
     ingestion_api_port: int = 8000

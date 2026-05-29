@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Prism — Setup Wizard</title>
+  <link rel="stylesheet" href="/static/components.css" />
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    body{min-height:100vh;background:#0a0e1a;font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;display:flex;align-items:center;justify-content:center;padding:24px 16px}
+    body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellipse 80% 60% at 10% 30%,rgba(99,102,241,.1) 0%,transparent 60%),radial-gradient(ellipse 60% 50% at 90% 80%,rgba(16,185,129,.07) 0%,transparent 60%);pointer-events:none}
+    body::after{content:'';position:fixed;inset:0;background-image:linear-gradient(rgba(99,102,241,.03) 1px,transparent 1px),linear-gradient(90deg,rgba(99,102,241,.03) 1px,transparent 1px);background-size:48px 48px;pointer-events:none}
+    .page{position:relative;z-index:10;width:100%;max-width:680px}
+    .ob-header{text-align:center;margin-bottom:36px}
+    .ob-logo{display:inline-flex;align-items:center;gap:12px;margin-bottom:14px}
+    .ob-icon{width:42px;height:42px;background:linear-gradient(135deg,#6366f1,#8b5cf6);border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:21px;box-shadow:0 0 20px rgba(99,102,241,.35)}
+    .ob-brand{font-size:24px;font-weight:700;background:linear-gradient(135deg,#e2e8f0,#a5b4fc);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+    .ob-title{font-size:21px;font-weight:600;color:#e2e8f0;margin-bottom:5px}
+    .ob-subtitle{font-size:13px;color:#64748b}
+    .steps-bar{display:flex;align-items:flex-start;justify-content:center;margin-bottom:32px}
+    .step-item{display:flex;flex-direction:column;align-items:center}
+    .step-connector{width:70px;height:2px;background:rgba(99,102,241,.15);margin-top:15px}
+    .step-connector.done{background:rgba(99,102,241,.5)}
+    .step-num{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;border:2px solid rgba(99,102,241,.2);color:#475569;background:rgba(255,255,255,.03);margin-bottom:5px}
+    .step-num.active{border-color:#6366f1;background:rgba(99,102,241,.15);color:#a5b4fc;box-shadow:0 0 12px rgba(99,102,241,.3)}
+    .step-num.done{border-color:rgba(16,185,129,.5);background:rgba(16,185,129,.1);color:#34d399}
+    .step-label{font-size:11px;color:#475569}
+    .step-item.active .step-label{color:#94a3b8}
+    .ob-card{background:rgba(15,20,40,.88);border:1px solid rgba(99,102,241,.2);border-radius:20px;padding:32px;backdrop-filter:blur(20px);box-shadow:0 24px 48px rgba(0,0,0,.4)}
+    .section-title{font-size:16px;font-weight:600;color:#e2e8f0;margin-bottom:4px;display:flex;align-items:center;gap:8px}
+    .section-desc{font-size:13px;color:#64748b;margin-bottom:22px}
+    .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+    .span2{grid-column:span 2}
+    .fg{display:flex;flex-direction:column;gap:0}
+    label{display:block;font-size:11px;font-weight:500;color:#94a3b8;text-transform:uppercase;letter-spacing:.7px;margin-bottom:6px}
+    input[type=text],input[type=email],input[type=password],select,textarea{width:100%;background:rgba(255,255,255,.04);border:1px solid rgba(99,102,241,.2);border-radius:9px;color:#e2e8f0;font-size:14px;padding:10px 13px;outline:none;transition:border-color .2s,box-shadow .2s;font-family:inherit}
+    input::placeholder,textarea::placeholder{color:#475569}
+    input:focus,select:focus,textarea:focus{border-color:rgba(99,102,241,.5);box-shadow:0 0 0 3px rgba(99,102,241,.1)}
+    select option{background:#0f1428}
+    textarea{resize:vertical;min-height:68px}
+    .members-list{display:flex;flex-direction:column;gap:8px}
+    .member-row{display:grid;grid-template-columns:1fr 1fr 120px 36px;gap:8px;align-items:end}
+    .btn-rm{width:36px;height:36px;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.2);border-radius:8px;color:#f87171;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .2s}
+    .btn-rm:hover{background:rgba(239,68,68,.2)}
+    .btn-add{margin-top:8px;padding:8px 16px;background:rgba(99,102,241,.1);border:1px dashed rgba(99,102,241,.3);border-radius:8px;color:#818cf8;font-size:13px;cursor:pointer;transition:background .2s}
+    .btn-add:hover{background:rgba(99,102,241,.18)}
+    .ob-actions{display:flex;justify-content:space-between;align-items:center;margin-top:28px;padding-top:22px;border-top:1px solid rgba(99,102,241,.1)}
+    .btn-back{padding:10px 22px;background:transparent;border:1px solid rgba(99,102,241,.25);border-radius:9px;color:#94a3b8;font-size:14px;cursor:pointer;transition:all .2s}
+    .btn-back:hover{border-color:rgba(99,102,241,.5);color:#e2e8f0}
+    .btn-next{padding:10px 26px;background:linear-gradient(135deg,#6366f1,#8b5cf6);border:none;border-radius:9px;color:#fff;font-size:14px;font-weight:600;cursor:pointer;transition:all .2s;box-shadow:0 4px 14px rgba(99,102,241,.3)}
+    .btn-next:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(99,102,241,.4)}
+    .btn-finish{padding:10px 26px;background:linear-gradient(135deg,#10b981,#059669);border:none;border-radius:9px;color:#fff;font-size:14px;font-weight:600;cursor:pointer;transition:all .2s;box-shadow:0 4px 14px rgba(16,185,129,.3)}
+    .btn-finish:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(16,185,129,.4)}
+    .err{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.25);border-radius:9px;padding:11px 15px;color:#fca5a5;font-size:13px;display:flex;align-items:center;gap:8px;margin-bottom:18px}
+    .skip-link{font-size:13px;color:#475569;cursor:pointer;border:none;background:transparent;text-decoration:underline}
+    .skip-link:hover{color:#94a3b8}
+    /* success */
+    .success-wrap{text-align:center;padding:12px 0}
+    .suc-icon{width:68px;height:68px;background:linear-gradient(135deg,rgba(16,185,129,.2),rgba(16,185,129,.08));border:2px solid rgba(16,185,129,.4);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:30px;margin:0 auto 18px;box-shadow:0 0 24px rgba(16,185,129,.2)}
+    .suc-title{font-size:21px;font-weight:700;color:#e2e8f0;margin-bottom:7px}
+    .suc-text{font-size:13px;color:#64748b;margin-bottom:24px;line-height:1.65}
+    .sum-list{display:flex;flex-direction:column;gap:9px;margin-bottom:24px;text-align:left}
+    .sum-item{display:flex;align-items:center;gap:12px;background:rgba(255,255,255,.03);border:1px solid rgba(99,102,241,.1);border-radius:9px;padding:11px 15px}
+    .sum-ico{font-size:18px}
+    .sum-lbl{font-size:11px;color:#64748b}
+    .sum-val{font-size:13px;font-weight:600;color:#e2e8f0}
+    .btn-go{display:inline-block;padding:12px 38px;background:linear-gradient(135deg,#6366f1,#8b5cf6);border:none;border-radius:11px;color:#fff;font-size:15px;font-weight:600;text-decoration:none;cursor:pointer;box-shadow:0 4px 16px rgba(99,102,241,.35);transition:all .2s}
+    .btn-go:hover{transform:translateY(-1px);box-shadow:0 6px 24px rgba(99,102,241,.45)}
+  </style>
+</head>
+<body>
+<div class="page">
+  <div class="ob-header">
+    <div class="ob-logo">
+      <div class="ob-icon">⬡</div>
+      <span class="ob-brand">Prism</span>
+    </div>
+    <h1 class="ob-title">Welcome! Let's set up your workspace</h1>
+    <p class="ob-subtitle">This quick wizard takes about 2 minutes to complete.</p>
+  </div>
+
+  <!-- Step indicator -->
+  <div class="steps-bar">
+    <div class="step-item {% if step >= 1 %}active{% endif %}">
+      <div class="step-num {% if step > 1 %}done{% elif step == 1 %}active{% endif %}">
+        {% if step > 1 %}✓{% else %}1{% endif %}
+      </div>
+      <div class="step-label">Project</div>
+    </div>
+    <div class="step-connector {% if step > 1 %}done{% endif %}"></div>
+    <div class="step-item {% if step >= 2 %}active{% endif %}">
+      <div class="step-num {% if step > 2 %}done{% elif step == 2 %}active{% endif %}">
+        {% if step > 2 %}✓{% else %}2{% endif %}
+      </div>
+      <div class="step-label">Team</div>
+    </div>
+    <div class="step-connector {% if step > 2 %}done{% endif %}"></div>
+    <div class="step-item {% if step >= 3 %}active{% endif %}">
+      <div class="step-num {% if step == 3 %}active{% elif step > 3 %}done{% endif %}">
+        {% if step > 3 %}✓{% else %}3{% endif %}
+      </div>
+      <div class="step-label">Done</div>
+    </div>
+  </div>
+
+  <div class="ob-card">
+    {% if error %}
+    <div class="err"><span>⚠</span><span>{{ error }}</span></div>
+    {% endif %}
+
+    <!-- ── Step 1: Project ─────────────────────────────────────── -->
+    {% if step == 1 %}
+    <div class="section-title">🗂 Create your first Project</div>
+    <p class="section-desc">A project represents an application or service you want to monitor.</p>
+    <form method="POST" action="/onboarding/step1">
+      <div class="form-grid">
+        <div class="fg span2">
+          <label>Project Name *</label>
+          <input type="text" name="name" placeholder="e.g. Order Processing Service" value="{{ form.name or '' }}" required />
+        </div>
+        <div class="fg span2">
+          <label>Description</label>
+          <textarea name="description" placeholder="Brief description of what this project does…">{{ form.description or '' }}</textarea>
+        </div>
+        <div class="fg span2">
+          <label>Repository URL</label>
+          <input type="text" name="repo_url" placeholder="https://github.com/org/repo" value="{{ form.repo_url or '' }}" />
+        </div>
+        <div class="fg">
+          <label>Tech Stack</label>
+          <input type="text" name="stack" placeholder="e.g. Python, FastAPI, PostgreSQL" value="{{ form.stack or '' }}" />
+        </div>
+        <div class="fg">
+          <label>Environment</label>
+          <select name="environment">
+            <option value="production" {% if (form.environment or 'production') == 'production' %}selected{% endif %}>Production</option>
+            <option value="staging" {% if form.environment == 'staging' %}selected{% endif %}>Staging</option>
+            <option value="development" {% if form.environment == 'development' %}selected{% endif %}>Development</option>
+          </select>
+        </div>
+      </div>
+      <div class="ob-actions">
+        <span></span>
+        <button type="submit" class="btn-next">Next: Create Team →</button>
+      </div>
+    </form>
+
+    <!-- ── Step 2: Team ────────────────────────────────────────── -->
+    {% elif step == 2 %}
+    <div class="section-title">👥 Set up your Team</div>
+    <p class="section-desc">Create a team and optionally add members. You can add more later.</p>
+    <form method="POST" action="/onboarding/step2">
+      <div class="form-grid" style="margin-bottom:14px">
+        <div class="fg span2">
+          <label>Team Name *</label>
+          <input type="text" name="team_name" placeholder="e.g. Platform Engineering" value="{{ form.team_name or '' }}" required />
+        </div>
+        <div class="fg span2">
+          <label>Description</label>
+          <textarea name="team_description" placeholder="What does this team own or maintain?">{{ form.team_description or '' }}</textarea>
+        </div>
+      </div>
+      <div style="margin-bottom:6px">
+        <label>Team Members <span style="color:#475569;text-transform:none;letter-spacing:0">(optional)</span></label>
+        <div class="members-list" id="members-list">
+          <div class="member-row">
+            <div class="fg"><label>Name</label><input type="text" name="m_name[]" placeholder="Alice Smith" /></div>
+            <div class="fg"><label>Email</label><input type="email" name="m_email[]" placeholder="alice@company.com" /></div>
+            <div class="fg"><label>Role</label>
+              <select name="m_role[]">
+                <option value="developer">Developer</option>
+                <option value="lead">Tech Lead</option>
+                <option value="manager">Manager</option>
+                <option value="sre">SRE</option>
+              </select>
+            </div>
+            <div class="fg"><label>&nbsp;</label><button type="button" class="btn-rm" onclick="removeRow(this)">✕</button></div>
+          </div>
+        </div>
+        <button type="button" class="btn-add" onclick="addMember()">+ Add Member</button>
+      </div>
+      <div class="ob-actions">
+        <a href="/onboarding?step=1" class="btn-back">← Back</a>
+        <button type="submit" class="btn-finish">Finish Setup ✓</button>
+      </div>
+    </form>
+
+    <!-- ── Step 3: Done ────────────────────────────────────────── -->
+    {% elif step == 3 %}
+    <div class="success-wrap">
+      <div class="suc-icon">✓</div>
+      <div class="suc-title">You're all set!</div>
+      <p class="suc-text">Your workspace has been configured. Start monitoring your services and get intelligent incident insights right away.</p>
+      <div class="sum-list">
+        {% if summary.project %}
+        <div class="sum-item">
+          <span class="sum-ico">🗂</span>
+          <div>
+            <div class="sum-lbl">Project created</div>
+            <div class="sum-val">{{ summary.project }}</div>
+          </div>
+        </div>
+        {% endif %}
+        {% if summary.team %}
+        <div class="sum-item">
+          <span class="sum-ico">👥</span>
+          <div>
+            <div class="sum-lbl">Team created</div>
+            <div class="sum-val">{{ summary.team }}{% if summary.members %} · {{ summary.members }} member{{ 's' if summary.members != 1 else '' }}{% endif %}</div>
+          </div>
+        </div>
+        {% endif %}
+      </div>
+      <a href="/dashboard" class="btn-go">Go to Dashboard →</a>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+function addMember() {
+  const list = document.getElementById('members-list');
+  const row = document.createElement('div');
+  row.className = 'member-row';
+  row.innerHTML = `
+    <div class="fg"><label>Name</label><input type="text" name="m_name[]" placeholder="Team member name" /></div>
+    <div class="fg"><label>Email</label><input type="email" name="m_email[]" placeholder="email@company.com" /></div>
+    <div class="fg"><label>Role</label>
+      <select name="m_role[]">
+        <option value="developer">Developer</option>
+        <option value="lead">Tech Lead</option>
+        <option value="manager">Manager</option>
+        <option value="sre">SRE</option>
+      </select>
+    </div>
+    <div class="fg"><label>&nbsp;</label><button type="button" class="btn-rm" onclick="removeRow(this)">✕</button></div>
+  `;
+  list.appendChild(row);
+}
+function removeRow(btn) {
+  const rows = document.querySelectorAll('.member-row');
+  if (rows.length > 1) btn.closest('.member-row').remove();
+}
+</script>
+</body>
+</html>

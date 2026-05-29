@@ -1,0 +1,142 @@
+{
+  "users": [
+    {
+      "id": "USR-ADMIN",
+      "username": "admin",
+      "email": "admin@prism.local",
+      "password_hash": "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9",
+      "role": "admin",
+      "created_at": "2026-05-21T10:43:47.598387",
+      "is_active": true,
+      "features": [
+        "dashboard",
+        "incidents",
+        "observability",
+        "app_health",
+        "log_viewer",
+        "settings"
+      ]
+    },
+    {
+      "id": "USR-6923C4B3",
+      "username": "u_avinash",
+      "email": "avinash.upadhyayula@nttdata.com",
+      "password_hash": "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9",
+      "role": "team_admin",
+      "features": [
+        "dashboard",
+        "incidents",
+        "observability",
+        "app_health",
+        "log_viewer",
+        "settings"
+      ],
+      "created_at": "2026-05-21T11:06:05.592593",
+      "is_active": true
+    },
+    {
+      "id": "USR-5485119B",
+      "username": "testuser",
+      "email": "testuser@prism.local",
+      "password_hash": "ecd71870d1963316a97e3ac3408c9835ad8cf0f3c1bc703527c30265534f75ae",
+      "role": "user",
+      "features": [
+        "dashboard",
+        "incidents"
+      ],
+      "created_at": "2026-05-21T14:58:18.340837",
+      "is_active": true
+    },
+    {
+      "id": "USR-60F83ABA",
+      "username": "hss_user1",
+      "email": "hss_user1@hss.com",
+      "password_hash": "18c3065fc953cc53876febb95e084bd2f1690622b28d1b9cae6a00ae8b5739b9",
+      "role": "user",
+      "features": [
+        "dashboard",
+        "incidents",
+        "observability",
+        "app_health",
+        "log_viewer",
+        "settings"
+      ],
+      "created_at": "2026-05-22T06:58:23.263130",
+      "is_active": true
+    },
+    {
+      "id": "USR-14F8D005",
+      "username": "hss_user2",
+      "email": "hss_user2@hss.com",
+      "password_hash": "18c3065fc953cc53876febb95e084bd2f1690622b28d1b9cae6a00ae8b5739b9",
+      "role": "user",
+      "features": [
+        "dashboard",
+        "incidents",
+        "observability",
+        "app_health",
+        "log_viewer",
+        "settings"
+      ],
+      "created_at": "2026-05-22T06:58:37.470498",
+      "is_active": true
+    }
+  ],
+  "projects": [
+    {
+      "id": "PRJ-E95DA993",
+      "name": "Hospital for Special Surgery",
+      "description": "The Hospital for Special Surgery (HSS), located in New York City, is the world’s leading academic medical center focused on musculoskeletal health. Founded in 1863, it is the oldest orthopedic hospital in the United States and has been nationally ranked No. 1 in orthopedics by U.S. News & World Report for 16 consecutive years",
+      "repo_url": "",
+      "stack": "MuleSoft",
+      "environment": "production",
+      "owner_id": "USR-ADMIN",
+      "team_admin_id": "USR-6923C4B3",
+      "team_admin_email": "avinash.upadhyayula@nttdata.com",
+      "created_at": "2026-05-21T15:45:26.563846",
+      "is_active": true
+    },
+    {
+      "id": "PRJ-A1996748",
+      "name": "NTT Data",
+      "description": "",
+      "repo_url": "",
+      "stack": "Java",
+      "environment": "production",
+      "owner_id": "USR-ADMIN",
+      "team_admin_id": "USR-6923C4B3",
+      "team_admin_email": "avinash.upadhyayula@nttdata.com",
+      "created_at": "2026-05-21T15:47:32.768733",
+      "is_active": true
+    }
+  ],
+  "teams": [],
+  "memberships": [],
+  "project_assignments": [
+    {
+      "id": "ASN-8263E8B5",
+      "user_id": "USR-6923C4B3",
+      "project_id": "PRJ-E95DA993",
+      "assigned_at": "2026-05-21T15:45:26.577375"
+    },
+    {
+      "id": "ASN-577B574A",
+      "user_id": "USR-6923C4B3",
+      "project_id": "PRJ-A1996748",
+      "assigned_at": "2026-05-21T15:47:32.780472"
+    },
+    {
+      "id": "ASN-1852741A",
+      "user_id": "USR-60F83ABA",
+      "project_id": "PRJ-E95DA993",
+      "assigned_at": "2026-05-22T06:59:07.081914"
+    },
+    {
+      "id": "ASN-20F512DA",
+      "user_id": "USR-14F8D005",
+      "project_id": "PRJ-E95DA993",
+      "assigned_at": "2026-05-22T06:59:07.125129"
+    }
+  ],
+  "project_configs": []
+}

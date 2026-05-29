@@ -1,0 +1,258 @@
+{% extends "base.html" %}
+
+{% block title %}Audit Trail — Prism{% endblock %}
+{% block topbar_title %}Audit Trail{% endblock %}
+
+{% block topbar_actions %}
+<span class="topbar-status">
+  <span class="status-dot status-dot--online"></span>
+  <span class="status-label">Integration Events</span>
+</span>
+<select class="select-sm" id="auditTypeFilter">
+  <option value="">All sources</option>
+  {% for source in audit_summary.sources %}
+  <option value="{{ source }}">{{ source }}</option>
+  {% endfor %}
+</select>
+<select class="select-sm" id="auditOutcomeFilter">
+  <option value="">All outcomes</option>
+  <option value="success">Success</option>
+  <option value="warning">Warning</option>
+  <option value="failure">Failure</option>
+</select>
+<button class="btn btn-ghost btn-sm" id="auditExportBtn">↓ Export</button>
+{% endblock %}
+
+{% block content %}
+<div class="page-content audit-page">
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Operational audit for integrated MuleSoft applications</h1>
+      <p class="page-subtitle">Track Jira, GitHub, Slack, Teams, MuleSoft and internal workflow events with timestamps and outcomes.</p>
+    </div>
+  </div>
+
+  <div class="stats-grid audit-stats-grid">
+    <div class="stat-card">
+      <div class="stat-card-label">Total Events</div>
+      <div class="stat-card-value">{{ audit_summary.total_events }}</div>
+      <div class="stat-card-delta">Across current retention window</div>
+    </div>
+    <div class="stat-card stat-card--critical">
+      <div class="stat-card-label">Failures</div>
+      <div class="stat-card-value">{{ audit_summary.failures }}</div>
+      <div class="stat-card-delta">Integration or workflow failures</div>
+    </div>
+    <div class="stat-card stat-card--warning">
+      <div class="stat-card-label">Warnings</div>
+      <div class="stat-card-value">{{ audit_summary.warnings }}</div>
+      <div class="stat-card-delta">Retry and degraded states</div>
+    </div>
+    <div class="stat-card stat-card--success">
+      <div class="stat-card-label">Sources</div>
+      <div class="stat-card-value">{{ audit_summary.sources|length }}</div>
+      <div class="stat-card-delta">Jira, GitHub, Slack, Teams, MuleSoft, System</div>
+    </div>
+  </div>
+
+  <div class="audit-layout">
+    <div class="card">
+      <div class="card-header">
+        <h2 class="card-title">Audit events</h2>
+      </div>
+      <div class="card-body" style="padding:0;">
+        <div class="table-wrapper">
+          <table class="data-table" id="auditTable">
+            <thead>
+              <tr>
+                <th>Timestamp</th>
+                <th>Source</th>
+                <th>Application</th>
+                <th>Environment</th>
+                <th>Event</th>
+                <th>Outcome</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for event in audit_rows %}
+              <tr class="audit-row" data-source="{{ event.source }}" data-outcome="{{ event.outcome }}">
+                <td>{{ event.timestamp }}</td>
+                <td>{{ event.source }}</td>
+                <td>{{ event.app }}</td>
+                <td>{{ event.environment }}</td>
+                <td>
+                  <div class="audit-event">{{ event.event }}</div>
+                  <div class="audit-meta">{{ event.details }}</div>
+                </td>
+                <td>
+                  <span class="badge {% if event.outcome == 'failure' %}badge-error{% elif event.outcome == 'warning' %}badge-warning{% else %}badge-success{% endif %}">
+                    {{ event.outcome | upper }}
+                  </span>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="audit-side-stack">
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">Suggested next steps</h2>
+        </div>
+        <div class="card-body">
+          <ul class="audit-notes">
+            <li>Add incident ID and correlation ID jump links for each audit row</li>
+            <li>Enable failure-only saved views for ops teams</li>
+            <li>Persist outbound request/response metadata safely for investigations</li>
+            <li>Add export to CSV / JSON / PDF formats</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">Recent failed integrations</h2>
+        </div>
+        <div class="card-body">
+          <div class="audit-highlight-list">
+            {% for item in failed_integrations %}
+            <div class="audit-highlight">
+              <strong>{{ item.source }}</strong>
+              <span>{{ item.event }} · {{ item.timestamp }}</span>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  .audit-page {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .audit-stats-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .audit-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.9fr) minmax(300px, .95fr);
+    gap: 1rem;
+    align-items: start;
+  }
+
+  .audit-side-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .audit-event {
+    font-weight: 700;
+  }
+
+  .audit-meta {
+    font-size: .82rem;
+    color: var(--text-muted, #6b7280);
+    margin-top: .15rem;
+  }
+
+  .audit-notes {
+    margin: 0;
+    padding-left: 1rem;
+    display: grid;
+    gap: .45rem;
+    color: var(--text-muted, #6b7280);
+  }
+
+  .audit-highlight-list {
+    display: grid;
+    gap: .75rem;
+  }
+
+  .audit-highlight {
+    display: flex;
+    flex-direction: column;
+    gap: .2rem;
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 12px;
+    padding: .75rem .85rem;
+    font-size: .92rem;
+  }
+
+  .audit-highlight span {
+    color: var(--text-muted, #6b7280);
+  }
+
+  @media (max-width: 1024px) {
+    .audit-stats-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .audit-layout {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .audit-stats-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (function() {
+    const sourceFilter = document.getElementById('auditTypeFilter');
+    const outcomeFilter = document.getElementById('auditOutcomeFilter');
+    const rows = Array.from(document.querySelectorAll('.audit-row'));
+    const exportBtn = document.getElementById('auditExportBtn');
+
+    function applyFilters() {
+      const source = sourceFilter ? sourceFilter.value : '';
+      const outcome = outcomeFilter ? outcomeFilter.value : '';
+      rows.forEach(function(row) {
+        const matchesSource = !source || row.dataset.source === source;
+        const matchesOutcome = !outcome || row.dataset.outcome === outcome;
+        row.hidden = !(matchesSource && matchesOutcome);
+      });
+    }
+
+    function exportAudit() {
+      const visibleRows = rows.filter(function(row) { return !row.hidden; });
+      const lines = ['timestamp,source,application,environment,event,outcome'];
+      visibleRows.forEach(function(row) {
+        const cols = row.querySelectorAll('td');
+        const timestamp = cols[0].textContent.trim();
+        const source = cols[1].textContent.trim();
+        const app = cols[2].textContent.trim();
+        const env = cols[3].textContent.trim();
+        const event = cols[4].querySelector('.audit-event').textContent.trim();
+        const outcome = cols[5].textContent.trim();
+        lines.push([timestamp, source, app, env, event, outcome].join(','));
+      });
+
+      const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = 'mule-audit-events.csv';
+      link.click();
+    }
+
+    if (sourceFilter) sourceFilter.addEventListener('change', applyFilters);
+    if (outcomeFilter) outcomeFilter.addEventListener('change', applyFilters);
+    if (exportBtn) exportBtn.addEventListener('click', exportAudit);
+  })();
+</script>
+{% endblock %}

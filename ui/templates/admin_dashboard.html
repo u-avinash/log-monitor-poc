@@ -1,0 +1,487 @@
+{% extends "base.html" %}
+{% block title %}Admin Dashboard — Prism{% endblock %}
+{% block topbar_title %}Admin Dashboard{% endblock %}
+
+{% block content %}
+<div class="page-header admin-page-header">
+  <div>
+    <p class="page-subtitle">Manage projects, ownership, and users from one streamlined workspace.</p>
+  </div>
+  <div class="page-header-actions">
+    <button class="btn btn-primary" type="button" onclick="openUserModal()">＋ Onboard User</button>
+  </div>
+</div>
+
+<div class="stats-grid admin-stats-grid">
+  <div class="stat-card admin-stat-card">
+    <div class="admin-stat-top">
+      <span class="stat-label">Projects</span>
+      <span class="stat-icon">🗂</span>
+    </div>
+    <div class="stat-value">{{ projects | length }}</div>
+  </div>
+  <div class="stat-card admin-stat-card">
+    <div class="admin-stat-top">
+      <span class="stat-label">Team Admins</span>
+      <span class="stat-icon">👔</span>
+    </div>
+    <div class="stat-value">{{ team_admins | length }}</div>
+  </div>
+  <div class="stat-card admin-stat-card">
+    <div class="admin-stat-top">
+      <span class="stat-label">Users</span>
+      <span class="stat-icon">👤</span>
+    </div>
+    <div class="stat-value">{{ users | length }}</div>
+  </div>
+</div>
+
+<div class="admin-dashboard-grid">
+  <section class="card admin-main-card">
+    <div class="card-header admin-card-header">
+      <div>
+        <h2 class="card-title">Projects</h2>
+        <p class="card-subtitle">Review and update project ownership.</p>
+      </div>
+      <a href="/admin/onboarding" class="btn btn-sm btn-primary">＋ Onboard Project</a>
+    </div>
+    <div class="card-body admin-table-card-body">
+      {% if projects %}
+      <div class="table-wrap">
+        <table class="table admin-table">
+          <thead>
+            <tr>
+              <th>Project</th>
+              <th>Team Admin</th>
+              <th>Stack</th>
+              <th>Created</th>
+              <th class="admin-actions-col">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for p in projects %}
+            <tr>
+              <td>
+                <div class="table-primary">{{ p.name }}</div>
+              </td>
+              <td>
+                {% if p.team_admin_email %}
+                  <div class="table-primary table-primary--sm">{{ p.team_admin_email }}</div>
+                {% else %}
+                  <span class="badge badge-warning">Needs assignment</span>
+                {% endif %}
+              </td>
+              <td>
+                <span class="badge badge-info">{{ p.stack or 'Not specified' }}</span>
+              </td>
+              <td class="table-secondary">{{ p.created_at[:10] if p.created_at else '—' }}</td>
+              <td>
+                <div class="table-actions">
+                  <button class="btn btn-ghost btn-sm edit-project-btn"
+                    data-id="{{ p.id }}"
+                    data-name="{{ p.name | e }}"
+                    data-stack="{{ p.stack | e }}"
+                    data-ta-email="{{ p.team_admin_email | e }}">✏ Edit</button>
+                  <button class="btn btn-ghost btn-sm delete-project-btn admin-delete-btn"
+                    data-id="{{ p.id }}"
+                    data-name="{{ p.name | e }}">🗑 Delete</button>
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="empty-state admin-empty-state">
+        <div class="empty-state-icon">🗂</div>
+        <p class="empty-state-title">No projects onboarded yet</p>
+        <p class="empty-state-desc">Start by creating your first project and assigning a Team Admin.</p>
+        <a href="/admin/onboarding" class="btn btn-primary">Onboard your first project</a>
+      </div>
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-header admin-card-header">
+      <div>
+        <h2 class="card-title">Team Admins</h2>
+        <p class="card-subtitle">Current ownership coverage across projects.</p>
+      </div>
+    </div>
+    <div class="card-body admin-side-body">
+      {% if team_admins %}
+      <div class="admin-list">
+        {% for u in team_admins %}
+        <div class="admin-list-item">
+          <div class="admin-list-main">
+            <div class="table-primary">{{ u.username }}</div>
+            <div class="table-secondary">{{ u.email or 'Email not available' }}</div>
+          </div>
+          <div class="admin-list-meta">
+            {% if u.is_active %}
+              <span class="badge badge-success">Active</span>
+            {% else %}
+              <span class="badge badge-error">Inactive</span>
+            {% endif %}
+            <span class="admin-list-date">{{ u.created_at[:10] if u.created_at else '—' }}</span>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="empty-state admin-empty-state admin-empty-state--compact">
+        <div class="empty-state-icon">👔</div>
+        <p class="empty-state-desc">No Team Admins available yet.</p>
+      </div>
+      {% endif %}
+    </div>
+  </section>
+</div>
+
+<section class="card" style="margin-top:1.5rem;">
+  <div class="card-header admin-card-header">
+    <div>
+      <h2 class="card-title">Onboarded Users</h2>
+      <p class="card-subtitle">Review all onboarded users and modify their details.</p>
+    </div>
+  </div>
+  <div class="card-body admin-table-card-body">
+    {% if users %}
+    <div class="table-wrap">
+      <table class="table admin-table">
+        <thead>
+          <tr>
+            <th>User</th>
+            <th>Role</th>
+            <th>Status</th>
+            <th>Created</th>
+            <th class="admin-actions-col">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for u in users %}
+          <tr>
+            <td>
+              <div class="table-primary">{{ u.username }}</div>
+              <div class="table-secondary">{{ u.email or 'Email not available' }}</div>
+            </td>
+            <td>
+              <span class="badge badge-info">{{ (u.role or 'user') | replace('_', ' ') | title }}</span>
+            </td>
+            <td>
+              {% if u.is_active %}
+                <span class="badge badge-success">Active</span>
+              {% else %}
+                <span class="badge badge-error">Inactive</span>
+              {% endif %}
+            </td>
+            <td class="table-secondary">{{ u.created_at[:10] if u.created_at else '—' }}</td>
+            <td>
+              <div class="table-actions">
+                <button class="btn btn-ghost btn-sm edit-user-btn"
+                  data-id="{{ u.id }}"
+                  data-username="{{ u.username | e }}"
+                  data-email="{{ u.email | e }}"
+                  data-role="{{ u.role | e }}">
+                  ✏ Edit
+                </button>
+                {% if u.username != 'admin' %}
+                <button class="btn btn-ghost btn-sm delete-user-btn admin-delete-btn"
+                  data-id="{{ u.id }}"
+                  data-name="{{ u.username | e }}">
+                  🗑 Delete
+                </button>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state admin-empty-state admin-empty-state--compact">
+      <div class="empty-state-icon">👤</div>
+      <p class="empty-state-desc">No onboarded users available yet.</p>
+    </div>
+    {% endif %}
+  </div>
+
+<div id="userModal" class="modal-overlay" hidden>
+  <div class="modal modal-md" role="dialog" aria-modal="true">
+    <div class="modal-header">
+      <h3 class="modal-title">Onboard New User</h3>
+      <button class="modal-close" onclick="closeUserModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label" for="newUsername">Username *</label>
+          <input class="form-input" id="newUsername" type="text" placeholder="jsmith" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="newUserEmail">Email *</label>
+          <input class="form-input" id="newUserEmail" type="email" placeholder="jsmith@company.com" />
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label" for="newUserPassword">Temporary Password *</label>
+          <input class="form-input" id="newUserPassword" type="password" placeholder="Minimum 8 characters" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="newUserRole">Role *</label>
+          <select class="form-input form-select" id="newUserRole">
+            <option value="user">User</option>
+            <option value="team_admin">Team Admin</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeUserModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="createUser()">Create User</button>
+    </div>
+  </div>
+</div>
+
+<div id="editUserModal" class="modal-overlay" hidden>
+  <div class="modal modal-md" role="dialog" aria-modal="true">
+    <div class="modal-header">
+      <h3 class="modal-title">Edit User</h3>
+      <button class="modal-close" onclick="closeEditUserModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="editUserId" />
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label" for="editUsername">Username *</label>
+          <input class="form-input" id="editUsername" type="text" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="editUserEmail">Email *</label>
+          <input class="form-input" id="editUserEmail" type="email" />
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label" for="editUserRole">Role *</label>
+          <select class="form-input form-select" id="editUserRole">
+            <option value="user">User</option>
+            <option value="team_admin">Team Admin</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="editUserPassword">New Password</label>
+          <input class="form-input" id="editUserPassword" type="password" placeholder="Leave blank to keep current password" />
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeEditUserModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveEditUser()">Save Changes</button>
+    </div>
+  </div>
+</div>
+
+<div id="editProjectModal" class="modal-overlay" hidden>
+  <div class="modal modal-md" role="dialog" aria-modal="true">
+    <div class="modal-header">
+      <h3 class="modal-title">Edit Project</h3>
+      <button class="modal-close" onclick="closeEditModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="editProjectId" />
+      <div class="form-group">
+        <label class="form-label" for="editProjectName">Project Name *</label>
+        <input class="form-input" id="editProjectName" type="text" required />
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="editProjectStack">Tech Stack</label>
+        <input class="form-input" id="editProjectStack" type="text" placeholder="e.g. Node.js, Java, Python" />
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="editProjectTAEmail">Team Admin Email</label>
+        <input class="form-input" id="editProjectTAEmail" type="email" placeholder="teamadmin@example.com" />
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeEditModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveEditProject()">Save Changes</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function prismAlert(message) {
+  if (window.Prism && typeof window.Prism.showAlert === 'function') {
+    window.Prism.showAlert('PrismAI', message);
+    return;
+  }
+  window.alert('PrismAI: ' + message);
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+  document.querySelectorAll('.edit-user-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      document.getElementById('editUserId').value = btn.dataset.id;
+      document.getElementById('editUsername').value = btn.dataset.username;
+      document.getElementById('editUserEmail').value = btn.dataset.email;
+      document.getElementById('editUserRole').value = btn.dataset.role;
+      document.getElementById('editUserPassword').value = '';
+      document.getElementById('editUserModal').hidden = false;
+    });
+  });
+
+  document.querySelectorAll('.delete-user-btn').forEach(function (btn) {
+    btn.addEventListener('click', async function () {
+      if (!confirm('Delete user "' + btn.dataset.name + '"? This cannot be undone.')) return;
+      const r = await fetch('/api/admin/users/' + btn.dataset.id, { method: 'DELETE' });
+      if (r.ok) {
+        location.reload();
+      } else {
+        const d = await r.json();
+        prismAlert(d.error || 'Error deleting user');
+      }
+    });
+  });
+
+  document.querySelectorAll('.edit-project-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      document.getElementById('editProjectId').value = btn.dataset.id;
+      document.getElementById('editProjectName').value = btn.dataset.name;
+      document.getElementById('editProjectStack').value = btn.dataset.stack;
+      document.getElementById('editProjectTAEmail').value = btn.dataset.taEmail || '';
+      document.getElementById('editProjectModal').hidden = false;
+    });
+  });
+
+  document.querySelectorAll('.delete-project-btn').forEach(function (btn) {
+    btn.addEventListener('click', async function () {
+      if (!confirm('Delete project "' + btn.dataset.name + '"? This cannot be undone.')) return;
+      const r = await fetch('/api/admin/projects/' + btn.dataset.id, { method: 'DELETE' });
+      if (r.ok) {
+        location.reload();
+      } else {
+        const d = await r.json();
+        prismAlert(d.error || 'Error deleting project');
+      }
+    });
+  });
+
+  document.getElementById('editProjectModal').addEventListener('click', function (e) {
+    if (e.target === this) closeEditModal();
+  });
+
+  document.getElementById('editUserModal').addEventListener('click', function (e) {
+    if (e.target === this) closeEditUserModal();
+  });
+});
+
+function openUserModal() {
+  document.getElementById('userModal').hidden = false;
+}
+
+function closeUserModal() {
+  document.getElementById('userModal').hidden = true;
+}
+
+function closeEditModal() {
+  document.getElementById('editProjectModal').hidden = true;
+}
+
+function closeEditUserModal() {
+  document.getElementById('editUserModal').hidden = true;
+}
+
+async function createUser() {
+  const username = document.getElementById('newUsername').value.trim();
+  const email = document.getElementById('newUserEmail').value.trim();
+  const password = document.getElementById('newUserPassword').value.trim();
+  const role = document.getElementById('newUserRole').value;
+
+  if (!username || !email || !password) {
+    prismAlert('Username, email and password are required');
+    return;
+  }
+
+  const r = await fetch('/api/admin/users', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: username, email: email, password: password, role: role })
+  });
+
+  if (r.ok) {
+    closeUserModal();
+    location.reload();
+  } else {
+    const d = await r.json();
+    prismAlert(d.error || d.detail || 'Error creating user');
+  }
+}
+
+async function saveEditUser() {
+  const id = document.getElementById('editUserId').value;
+  const username = document.getElementById('editUsername').value.trim();
+  const email = document.getElementById('editUserEmail').value.trim();
+  const role = document.getElementById('editUserRole').value;
+  const password = document.getElementById('editUserPassword').value.trim();
+
+  if (!username || !email || !role) {
+    prismAlert('Username, email and role are required');
+    return;
+  }
+
+  const payload = { username: username, email: email, role: role };
+  if (password) {
+    payload.password = password;
+  }
+
+  const r = await fetch('/api/admin/users/' + id, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+
+  if (r.ok) {
+    closeEditUserModal();
+    location.reload();
+  } else {
+    const d = await r.json();
+    prismAlert(d.error || d.detail || 'Error updating user');
+  }
+}
+
+async function saveEditProject() {
+  const id = document.getElementById('editProjectId').value;
+  const name = document.getElementById('editProjectName').value.trim();
+  const stack = document.getElementById('editProjectStack').value.trim();
+  const taEmail = document.getElementById('editProjectTAEmail').value.trim();
+
+  if (!name) {
+    prismAlert('Project name is required');
+    return;
+  }
+
+  const r = await fetch('/api/admin/projects/' + id, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: name, stack: stack, team_admin_email: taEmail })
+  });
+
+  if (r.ok) {
+    closeEditModal();
+    location.reload();
+  } else {
+    const d = await r.json();
+    prismAlert(d.error || 'Error updating project');
+  }
+}
+</script>
+{% endblock %}

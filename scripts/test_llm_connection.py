@@ -236,7 +236,7 @@ def test_json_parsing():
 
 
 if __name__ == '__main__':
-    print("\nLOG MONITOR - LLM CONNECTION DIAGNOSTICS\n")
+    print("\nPRISM AI - LLM CONNECTION DIAGNOSTICS\n")
     
     # Test connection
     connection_ok = test_llm_connection()

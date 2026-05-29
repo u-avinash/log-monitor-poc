@@ -1,0 +1,202 @@
+<![CDATA[<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}Prism — Log Monitor{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css" />
+  <link rel="stylesheet" href="/static/components.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔷</text></svg>" />
+  <style>
+    /* Topbar user pill */
+    .topbar-user {
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+      margin-left: 1rem;
+      padding: 0.35rem 0.9rem 0.35rem 0.7rem;
+      background: rgba(15, 23, 42, 0.85);
+      border: 1.5px solid rgba(139,92,246,.55);
+      border-radius: 9999px;
+      font-size: 0.82rem;
+      box-shadow: 0 2px 8px rgba(0,0,0,.35);
+    }
+    .topbar-user-avatar {
+      width: 1.6rem; height: 1.6rem;
+      border-radius: 50%;
+      background: linear-gradient(135deg,#7c3aed,#4f46e5);
+      color: #fff;
+      font-weight: 700;
+      font-size: 0.78rem;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+      text-transform: uppercase;
+    }
+    .topbar-user-info { display: flex; flex-direction: column; line-height: 1.2; }
+    .topbar-user-name {
+      font-weight: 700;
+      color: #f1f5f9;
+      font-size: 0.82rem;
+      letter-spacing: .01em;
+    }
+    .topbar-user-role {
+      color: #a78bfa;
+      font-size: 0.68rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+    }
+    .topbar-logout {
+      margin-left: 0.35rem;
+      color: #fca5a5 !important;
+      font-size: 0.78rem !important;
+      font-weight: 600 !important;
+      border: 1.5px solid rgba(239,68,68,.5) !important;
+      border-radius: 6px !important;
+      padding: 0.2rem 0.6rem !important;
+      background: rgba(239,68,68,.08) !important;
+    }
+    .topbar-logout:hover { background: rgba(239,68,68,.22) !important; color: #fff !important; }
+    .topbar-integrations {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+      margin-left: 0.35rem;
+    }
+    .topbar-integration-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.3rem 0.55rem;
+      border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, 0.24);
+      background: rgba(255,255,255,0.7);
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: #475569;
+      line-height: 1;
+    }
+    .topbar-integration-pill--online {
+      border-color: rgba(34,197,94,.28);
+      background: rgba(34,197,94,.10);
+      color: #166534;
+    }
+    .topbar-integration-pill--offline {
+      border-color: rgba(148,163,184,.24);
+      background: rgba(148,163,184,.08);
+      color: #64748b;
+    }
+    .topbar-integration-pill__icon {
+      font-size: 0.8rem;
+      line-height: 1;
+    }
+    .topbar-integration-pill__label {
+      letter-spacing: .01em;
+    }
+  </style>
+</head>
+<body>
+
+{% set _role = current_user.role if current_user else 'user' %}
+
+<!-- ═══════════════════════════════════════════════════ TOPBAR -->
+<header class="topbar">
+  <div class="topbar-brand">
+    <span class="topbar-brand-icon">◈</span>
+    <div class="topbar-brand-text">
+      <span class="topbar-brand-name">Prism</span>
+      <span class="topbar-brand-sub">Intelligent Incident Response</span>
+    </div>
+  </div>
+
+  <div class="topbar-title">{% block topbar_title %}{% endblock %}</div>
+
+  <div class="topbar-actions">
+    {% block topbar_actions %}
+    {% if current_user and current_user.role == 'user' %}
+    <span class="topbar-status" id="apiStatus" title="Ingestion API status">
+      <span class="status-dot {% if api_online is defined and api_online %}status-dot--online{% else %}status-dot--offline{% endif %}"></span>
+      <span class="status-label">{% if api_online is defined and api_online %}API Online{% else %}API Offline{% endif %}</span>
+    </span>
+    {% set integration_meta = [
+      ('llm', '🤖', 'LLM'),
+      ('jira', '🎫', 'Jira'),
+      ('github', '🐙', 'GitHub'),
+      ('anypoint', '☁️', 'Anypoint'),
+      ('slack', '💬', 'Slack'),
+      ('teams', '🪟', 'Teams')
+    ] %}
+    {% if integration_status is defined and integration_status %}
+    <div class="topbar-integrations" aria-label="Project integrations">
+      {% for key, icon, label in integration_meta %}
+      <span class="topbar-integration-pill {% if integration_status.get(key) %}topbar-integration-pill--online{% else %}topbar-integration-pill--offline{% endif %}" title="{{ label }} {% if integration_status.get(key) %}connected{% else %}not configured{% endif %}">
+        <span class="topbar-integration-pill__icon">{{ icon }}</span>
+        <span class="topbar-integration-pill__label">{{ label }}</span>
+      </span>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% if selected_project is defined and selected_project %}
+    <span class="topbar-integration-pill topbar-integration-pill--online" title="Active project">
+      <span class="topbar-integration-pill__icon">📦</span>
+      <span class="topbar-integration-pill__label">{{ selected_project.name }}</span>
+    </span>
+    {% endif %}
+    <button class="btn btn-ghost btn-sm" id="refreshBtn" title="Refresh data">↻ Refresh</button>
+    {% endif %}
+    {% if current_user %}
+      {% if _role == 'admin' %}
+      <a href="/admin/dashboard" class="btn btn-ghost btn-sm{% if page == 'admin_dashboard' %} topbar-nav-link--active{% endif %}">Dashboard</a>
+      <a href="/admin/onboarding" class="btn btn-ghost btn-sm{% if page == 'admin_onboarding' %} topbar-nav-link--active{% endif %}">Onboarding</a>
+      {% elif _role == 'team_admin' %}
+      <a href="/team-admin/dashboard" class="btn btn-ghost btn-sm{% if page == 'team_admin_dashboard' %} topbar-nav-link--active{% endif %}">Dashboard</a>
+      <a href="/team-admin/onboarding" class="btn btn-ghost btn-sm{% if page == 'team_admin_onboarding' %} topbar-nav-link--active{% endif %}">Configure Project</a>
+      {% endif %}
+    {% endif %}
+    {% endblock %}
+    {% if current_user %}
+    <div class="topbar-user">
+      <div class="topbar-user-avatar">{{ current_user.username[0] | upper }}</div>
+      <div class="topbar-user-info">
+        <span class="topbar-user-name">{{ current_user.username }}</span>
+        <span class="topbar-user-role">{% if current_user.role == 'admin' %}🛡 Admin{% elif current_user.role == 'team_admin' %}👔 Team Admin{% else %}👤 {{ current_user.role | replace('_',' ') | title }}{% endif %}</span>
+      </div>
+      <a href="/logout" class="btn btn-ghost btn-sm topbar-logout" title="Logout">⏻ Logout</a>
+    </div>
+    {% endif %}
+  </div>
+</header>
+<!-- /TOPBAR -->
+
+<!-- ═══════════════════════════════════════════════════ MAIN -->
+<main class="main-content" id="mainContent">
+  {% block content %}{% endblock %}
+</main>
+<!-- /MAIN -->
+
+<!-- ═══════════════════════════════════════════════════ TOAST CONTAINER -->
+<div class="toast-container" id="toastContainer" aria-live="polite"></div>
+
+<!-- ═══════════════════════════════════════════════════ MODAL OVERLAY -->
+<div class="modal-overlay" id="modalOverlay" hidden>
+  <div class="modal" id="modalBox" role="dialog" aria-modal="true">
+    <div class="modal-header">
+      <h3 class="modal-title" id="modalTitle">Confirm</h3>
+      <button class="modal-close" id="modalClose" aria-label="Close modal">✕</button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+    <div class="modal-footer" id="modalFooter">
+      <button class="btn btn-ghost" id="modalCancel">Cancel</button>
+      <button class="btn btn-primary" id="modalConfirm">Confirm</button>
+    </div>
+  </div>
+</div>
+
+{% block extra_content %}{% endblock %}
+
+<script src="/static/app.js"></script>
+{% block extra_js %}{% endblock %}
+</body>
+</html>
+]]>

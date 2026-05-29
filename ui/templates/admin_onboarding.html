@@ -1,0 +1,303 @@
+{% extends "base.html" %}
+{% block title %}Onboard Project — Admin{% endblock %}
+{% block topbar_title %}Project Onboarding{% endblock %}
+
+{% block content %}
+<div class="page-header admin-page-header">
+  <div>
+    <h1 class="page-title">Onboard New Project</h1>
+    <p class="page-subtitle">Create a project, choose ownership, and review everything before submission.</p>
+  </div>
+  <div class="page-header-actions">
+    <a href="/admin/dashboard" class="btn btn-ghost">← Back to Dashboard</a>
+  </div>
+</div>
+
+<div class="admin-onboarding-shell">
+  <section class="card admin-onboarding-side">
+    <div class="card-header admin-card-header">
+      <div>
+        <h2 class="card-title">Setup Steps</h2>
+        <p class="card-subtitle">Complete each section in sequence.</p>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="stepper-vertical">
+        <div class="step-item active" id="step-ind-1">
+          <div class="step-circle">1</div>
+          <div class="step-copy">
+            <div class="step-title">Project Details</div>
+            <div class="step-caption">Basic information for the new project</div>
+          </div>
+        </div>
+        <div class="step-item" id="step-ind-2">
+          <div class="step-circle">2</div>
+          <div class="step-copy">
+            <div class="step-title">Team Admin</div>
+            <div class="step-caption">Assign an existing owner or create one</div>
+          </div>
+        </div>
+        <div class="step-item" id="step-ind-3">
+          <div class="step-circle">3</div>
+          <div class="step-copy">
+            <div class="step-title">Confirm</div>
+            <div class="step-caption">Review the setup and create the project</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="admin-onboarding-main">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for cat, msg in messages %}
+          <div class="alert alert-{{ cat }}" style="margin-bottom:1rem;">{{ msg }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    <div id="step1" class="card">
+      <div class="card-header admin-card-header">
+        <div>
+          <h2 class="card-title">Step 1 — Project Details</h2>
+          <p class="card-subtitle">Only essential fields are shown so the form stays focused and readable.</p>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label" for="projectName">Project Name *</label>
+            <input class="form-input" id="projectName" type="text" placeholder="e.g. Order Management System" />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="projectStack">Tech Stack</label>
+            <input class="form-input" id="projectStack" type="text" placeholder="e.g. Java Spring Boot, Node.js, Python" />
+          </div>
+        </div>
+        <div class="admin-form-actions">
+          <button class="btn btn-primary" onclick="goStep(2)">Next →</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="step2" class="card" style="display:none;">
+      <div class="card-header admin-card-header">
+        <div>
+          <h2 class="card-title">Step 2 — Assign Team Admin</h2>
+          <p class="card-subtitle">Select one clear ownership path for the project.</p>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="admin-choice-grid">
+          <label class="choice-card choice-card--active" id="existingChoiceCard">
+            <input type="radio" name="taMode" value="existing" id="taExisting" checked onchange="toggleTAMode()" />
+            <div class="choice-card-content">
+              <div class="choice-card-title">Assign existing Team Admin</div>
+              <div class="choice-card-text">Use an existing Team Admin account already available in the platform.</div>
+            </div>
+          </label>
+
+          <label class="choice-card" id="newChoiceCard">
+            <input type="radio" name="taMode" value="new" id="taNew" onchange="toggleTAMode()" />
+            <div class="choice-card-content">
+              <div class="choice-card-title">Create new Team Admin</div>
+              <div class="choice-card-text">Create a fresh Team Admin profile for this project.</div>
+            </div>
+          </label>
+        </div>
+
+        <div id="taExistingSection" class="admin-section-panel">
+          <div class="form-group">
+            <label class="form-label" for="taSelectExisting">Select Team Admin</label>
+            <select class="form-input form-select" id="taSelectExisting">
+              <option value="">Leave unassigned for now</option>
+              {% for ta in team_admins %}
+              <option value="{{ ta.id }}" data-email="{{ ta.email or '' }}">
+                {{ ta.username }}{% if ta.email %} — {{ ta.email }}{% endif %}
+              </option>
+              {% endfor %}
+            </select>
+            <div class="form-hint">You can always assign or change the owner later from the Admin Dashboard.</div>
+          </div>
+        </div>
+
+        <div id="taNewSection" class="admin-section-panel" style="display:none;">
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="taUsername">Username *</label>
+              <input class="form-input" id="taUsername" type="text" placeholder="teamadmin_projectname" />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="taEmail">Email *</label>
+              <input class="form-input" id="taEmail" type="email" placeholder="teamadmin@company.com" />
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="taPassword">Temporary Password *</label>
+              <input class="form-input" id="taPassword" type="password" placeholder="Minimum 8 characters" />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="taFullName">Full Name</label>
+              <input class="form-input" id="taFullName" type="text" placeholder="Jane Smith" />
+            </div>
+          </div>
+        </div>
+
+        <div class="admin-form-actions admin-form-actions--split">
+          <button class="btn btn-ghost" onclick="goStep(1)">← Back</button>
+          <button class="btn btn-primary" onclick="goStep(3)">Next →</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="step3" class="card" style="display:none;">
+      <div class="card-header admin-card-header">
+        <div>
+          <h2 class="card-title">Step 3 — Confirm & Create</h2>
+          <p class="card-subtitle">Review all visible values before the project is created.</p>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="summary-box">
+          <h3 class="summary-title">Summary</h3>
+          <div id="summaryContent" class="summary-grid"></div>
+        </div>
+        <div class="admin-form-actions admin-form-actions--split">
+          <button class="btn btn-ghost" onclick="goStep(2)">← Back</button>
+          <button class="btn btn-primary" id="submitBtn" onclick="submitOnboarding()">✓ Create Project</button>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function goStep(n) {
+  if (n === 2) {
+    if (!document.getElementById('projectName').value.trim()) {
+      alert('Project name is required.');
+      return;
+    }
+  }
+
+  if (n === 3) {
+    const isNew = document.getElementById('taNew').checked;
+    if (isNew) {
+      if (
+        !document.getElementById('taUsername').value.trim() ||
+        !document.getElementById('taEmail').value.trim() ||
+        !document.getElementById('taPassword').value.trim()
+      ) {
+        alert('Username, email and password are required for a new Team Admin.');
+        return;
+      }
+    }
+    buildSummary();
+  }
+
+  [1, 2, 3].forEach(function (i) {
+    const step = document.getElementById('step' + i);
+    if (step) step.style.display = i === n ? '' : 'none';
+
+    const indicator = document.getElementById('step-ind-' + i);
+    if (indicator) {
+      indicator.classList.remove('active', 'done');
+      if (i === n) indicator.classList.add('active');
+      else if (i < n) indicator.classList.add('done');
+    }
+  });
+}
+
+function toggleTAMode() {
+  const isNew = document.getElementById('taNew').checked;
+  document.getElementById('taExistingSection').style.display = isNew ? 'none' : '';
+  document.getElementById('taNewSection').style.display = isNew ? '' : 'none';
+  document.getElementById('existingChoiceCard').classList.toggle('choice-card--active', !isNew);
+  document.getElementById('newChoiceCard').classList.toggle('choice-card--active', isNew);
+}
+
+function buildSummary() {
+  const name = document.getElementById('projectName').value.trim();
+  const stack = document.getElementById('projectStack').value.trim();
+  const isNew = document.getElementById('taNew').checked;
+
+  let teamAdminValue = 'Leave unassigned for now';
+  if (isNew) {
+    teamAdminValue = document.getElementById('taUsername').value.trim() + ' (' + document.getElementById('taEmail').value.trim() + ')';
+  } else {
+    const sel = document.getElementById('taSelectExisting');
+    if (sel.value) {
+      teamAdminValue = sel.options[sel.selectedIndex].text;
+    }
+  }
+
+  const rows = [
+    ['Project Name', name],
+    ['Tech Stack', stack || 'Not provided'],
+    ['Team Admin', teamAdminValue]
+  ];
+
+  document.getElementById('summaryContent').innerHTML = rows
+    .map(function (row) {
+      return '<div class="summary-item"><span class="summary-label">' + row[0] + '</span><span class="summary-value">' + row[1] + '</span></div>';
+    })
+    .join('');
+}
+
+async function submitOnboarding() {
+  const btn = document.getElementById('submitBtn');
+  btn.disabled = true;
+  btn.textContent = 'Creating…';
+
+  const isNew = document.getElementById('taNew').checked;
+  const payload = {
+    name: document.getElementById('projectName').value.trim(),
+    stack: document.getElementById('projectStack').value.trim()
+  };
+
+  if (isNew) {
+    payload.team_admin_email = document.getElementById('taEmail').value.trim();
+    payload.ta_username = document.getElementById('taUsername').value.trim();
+    payload.ta_password = document.getElementById('taPassword').value.trim();
+    payload.ta_full_name = document.getElementById('taFullName').value.trim();
+  } else {
+    const sel = document.getElementById('taSelectExisting');
+    const selectedOption = sel.options[sel.selectedIndex];
+    if (!sel.value) {
+      alert('Please select an existing Team Admin or choose "Create new Team Admin".');
+      btn.disabled = false;
+      btn.textContent = '✓ Create Project';
+      return;
+    }
+    payload.team_admin_email = selectedOption.dataset.email || '';
+    payload.ta_username = selectedOption.text.split('—')[0].trim();
+    payload.ta_password = 'existing-user';
+  }
+
+  try {
+    const r = await fetch('/api/admin/onboard-project', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const d = await r.json();
+
+    if (r.ok) {
+      window.location.href = '/admin/dashboard?created=' + encodeURIComponent((d.project && d.project.name) || payload.name || 'project');
+    } else {
+      alert(d.error || 'Error creating project');
+      btn.disabled = false;
+      btn.textContent = '✓ Create Project';
+    }
+  } catch (e) {
+    alert('Network error: ' + e.message);
+    btn.disabled = false;
+    btn.textContent = '✓ Create Project';
+  }
+}
+</script>
+{% endblock %}

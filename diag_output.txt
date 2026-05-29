@@ -1,0 +1,26 @@
+Traceback (most recent call last):
+  File "c:\Users\321404\Documents\GitHub\log-monitor-poc\scripts\diag_server.py", line 40, in <module>
+    tmpl = env.get_template("dashboard.html")
+  File "C:\Users\321404\AppData\Roaming\Python\Python313\site-packages\jinja2\environment.py", line 1016, in get_template
+    return self._load_template(name, globals)
+           ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^
+  File "C:\Users\321404\AppData\Roaming\Python\Python313\site-packages\jinja2\environment.py", line 975, in _load_template
+    template = self.loader.load(self, name, self.make_globals(globals))
+  File "C:\Users\321404\AppData\Roaming\Python\Python313\site-packages\jinja2\loaders.py", line 138, in load
+    code = environment.compile(source, name, filename)
+  File "C:\Users\321404\AppData\Roaming\Python\Python313\site-packages\jinja2\environment.py", line 771, in compile
+    self.handle_exception(source=source_hint)
+    ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\321404\AppData\Roaming\Python\Python313\site-packages\jinja2\environment.py", line 942, in handle_exception
+    raise rewrite_traceback_stack(source=source)
+  File "c:\Users\321404\Documents\GitHub\log-monitor-poc\ui\templates\dashboard.html", line 87, in template
+    <span class="badge {{ inc.severity | severity_badge }}">{{ inc.severity or '—' }}</span>
+    ^^^^^^^^^^^^^^^^^^^
+jinja2.exceptions.TemplateAssertionError: No filter named 'severity_badge'.
+Incidents fetched: 3
+Stats computed: {'total': 3, 'critical': 2, 'high': 1, 'medium': 0, 'low': 0, 'pending_approval': 2, 'prs_created': 0, 'jira_created': 2, 'completed': 0, 'by_severity': {'HIGH': 1, 'CRITICAL': 2}, 'by_status': {'DETECTED': 1, 'PENDING_APPROVAL': 2}}
+Static dir exists: True
+Static files: ['app.css', 'app.js']
+Templates dir exists: True
+Template files: ['base.html', 'dashboard.html', 'incidents.html', 'incident_detail.html', 'settings.html']
+ERROR: No filter named 'severity_badge'.

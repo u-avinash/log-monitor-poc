@@ -1,0 +1,207 @@
+{
+  "2a243a59-b49f-4ae3-8a02-8168a49cae33": {
+    "user_id": "USR-ADMIN",
+    "username": "admin",
+    "role": "admin",
+    "email": "admin@prism.local",
+    "features": [
+      "dashboard",
+      "incidents",
+      "observability",
+      "app_health",
+      "log_viewer",
+      "settings"
+    ],
+    "created_at": "2026-05-21T10:47:35.643428"
+  },
+  "392e837a-91a6-42dc-ae83-4c1a551322be": {
+    "user_id": "USR-ADMIN",
+    "username": "admin",
+    "role": "admin",
+    "email": "admin@prism.local",
+    "features": [
+      "dashboard",
+      "incidents",
+      "observability",
+      "app_health",
+      "log_viewer",
+      "settings"
+    ],
+    "created_at": "2026-05-21T10:52:03.310443"
+  },
+  "04a20db6-4ee3-4349-92dd-1fbef6ae0659": {
+    "user_id": "USR-6F11ECAC",
+    "username": "teamadmin",
+    "role": "team_admin",
+    "email": "teamadmin@example.com",
+    "features": [
+      "dashboard",
+      "incidents",
+      "observability",
+      "app_health",
+      "log_viewer",
+      "settings"
+    ],
+    "created_at": "2026-05-21T11:02:36.684997"
+  },
+  "d41c092f-b6fe-4ce3-b1d3-187234c839e5": {
+    "user_id": "USR-ADMIN",
+    "username": "admin",
+    "role": "admin",
+    "email": "admin@prism.local",
+    "features": [
+      "dashboard",
+      "incidents",
+      "observability",
+      "app_health",
+      "log_viewer",
+      "settings"
+    ],
+    "created_at": "2026-05-21T11:06:46.605891"
+  },
+  "4f6cbe1b-509c-46a6-b723-351c0320efe0": {
+    "user_id": "USR-6F11ECAC",
+    "username": "teamadmin",
+    "role": "team_admin",
+    "email": "teamadmin@example.com",
+    "features": [
+      "dashboard",
+      "incidents",
+      "observability",
+      "app_health",
+      "log_viewer",
+      "settings"
+    ],
+    "created_at": "2026-05-21T11:15:49.779161"
+  },
+  "3d0c9a8f-d7db-4b43-baee-03df017e240d": {
+    "user_id": "USR-TESTUSER",
+    "username": "testuser",
+    "role": "user",
+    "email": "testuser@prism.local",
+    "features": [
+      "dashboard",
+      "incidents",
+      "observability",
+      "app_health",
+      "log_viewer"
+    ],
+    "created_at": "2026-05-21T12:06:20.838985"
+  },
+  "2b547363-e6d5-40de-9a8b-3fd214154bb9": {
+    "user_id": "USR-TESTUSER",
+    "username": "testuser",
+    "role": "user",
+    "email": "testuser@prism.local",
+    "features": [
+      "dashboard",
+      "incidents",
+      "observability",
+      "app_health",
+      "log_viewer"
+    ],
+    "created_at": "2026-05-21T12:30:54.182809"
+  },
+  "cd4e7133-ffee-4ee7-94f2-617edf8c6b1b": {
+    "user_id": "USR-TESTUSER",
+    "username": "testuser",
+    "role": "user",
+    "email": "testuser@prism.local",
+    "features": [
+      "dashboard",
+      "incidents",
+      "observability",
+      "log_viewer"
+    ],
+    "created_at": "2026-05-21T14:00:00.119241"
+  },
+  "fee42a16-4fd0-4bef-b1b1-84db80f9b7fd": {
+    "user_id": "USR-5485119B",
+    "username": "testuser",
+    "role": "user",
+    "email": "testuser@prism.local",
+    "features": [
+      "dashboard",
+      "incidents"
+    ],
+    "created_at": "2026-05-21T15:01:17.394706"
+  },
+  "572b020b-b699-4d40-adfd-93530e684749": {
+    "user_id": "USR-5485119B",
+    "username": "testuser",
+    "role": "user",
+    "email": "testuser@prism.local",
+    "features": [
+      "dashboard",
+      "incidents"
+    ],
+    "created_at": "2026-05-21T15:19:27.464934"
+  },
+  "67dfd196-468d-4e84-87c9-c4d6f78816d3": {
+    "user_id": "USR-6923C4B3",
+    "username": "u_avinash",
+    "role": "team_admin",
+    "email": "avinash.upadhyayula@nttdata.com",
+    "features": [
+      "dashboard",
+      "incidents",
+      "observability",
+      "app_health",
+      "log_viewer",
+      "settings"
+    ],
+    "created_at": "2026-05-21T16:01:16.699222"
+  },
+  "e0b0f5f9-da6d-4e21-8e6b-eb0bae198e03": {
+    "user_id": "USR-6923C4B3",
+    "username": "u_avinash",
+    "role": "team_admin",
+    "email": "avinash.upadhyayula@nttdata.com",
+    "features": [
+      "dashboard",
+      "incidents",
+      "observability",
+      "app_health",
+      "log_viewer",
+      "settings"
+    ],
+    "created_at": "2026-05-21T16:09:52.486862"
+  },
+  "5c70f2db-e213-483d-be2e-a411d4a8730a": {
+    "user_id": "USR-5485119B",
+    "username": "testuser",
+    "role": "user",
+    "email": "testuser@prism.local",
+    "features": [
+      "dashboard",
+      "incidents"
+    ],
+    "created_at": "2026-05-22T06:50:42.547608"
+  },
+  "e8f5f548-0b1e-4def-bc85-f180f57b3c07": {
+    "user_id": "USR-5485119B",
+    "username": "testuser",
+    "role": "user",
+    "email": "testuser@prism.local",
+    "features": [
+      "dashboard",
+      "incidents"
+    ],
+    "created_at": "2026-05-22T07:22:37.105065"
+  },
+  "42b2444b-770c-4e83-991e-a832ecd788a2": {
+    "user_id": "USR-60F83ABA",
+    "username": "hss_user1",
+    "role": "user",
+    "email": "hss_user1@hss.com",
+    "features": [
+      "dashboard",
+      "incidents",
+      "observability",
+      "app_health",
+      "log_viewer",
+      "settings"
+    ],
+    "created_at": "2026-05-29T11:33:27.498630"
+  }
+}

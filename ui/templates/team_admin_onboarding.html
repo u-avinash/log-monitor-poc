@@ -1,0 +1,1332 @@
+{% extends "base.html" %}
+{% block title %}Team Setup — Team Admin{% endblock %}
+{% block topbar_title %}Configure Project{% endblock %}
+
+{% block content %}
+<div class="page-header admin-page-header">
+  <div>
+    <h1 class="page-title">Project Configuration</h1>
+    <p class="page-subtitle">Manage members and integrations with a verification-first setup flow.</p>
+  </div>
+  <div class="page-header-actions">
+    <a href="/team-admin/dashboard" class="btn btn-ghost">← Back to Dashboard</a>
+  </div>
+</div>
+
+<div class="team-onboarding-shell">
+  <aside class="card team-onboarding-side">
+    <div class="card-header admin-card-header">
+      <div>
+        <h2 class="card-title">Configuration Areas</h2>
+        <p class="card-subtitle">Use one clear section at a time.</p>
+      </div>
+    </div>
+    <div class="card-body">
+      {% if projects %}
+      <div class="form-group" style="margin-bottom: 1rem;">
+        <label class="form-label" for="configProjectSelect">Active Project</label>
+        <select class="form-input form-select" id="configProjectSelect" onchange="switchProjectContext(this.value)">
+          {% for p in projects %}
+          <option value="{{ p.id }}" {% if selected_project and p.id == selected_project.id %}selected{% endif %}>{{ p.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      {% endif %}
+      <div class="team-tab-nav">
+        <button class="team-tab-btn active" onclick="showTab('tab-member')" id="tabBtn-member">👤 Team Members</button>
+        <button class="team-tab-btn" onclick="showTab('tab-project')" id="tabBtn-project">⚙ Project</button>
+        <button class="team-tab-btn" onclick="showTab('tab-llm')" id="tabBtn-llm">🤖 LLM</button>
+        <button class="team-tab-btn" onclick="showTab('tab-jira')" id="tabBtn-jira">📋 Jira</button>
+        <button class="team-tab-btn" onclick="showTab('tab-github')" id="tabBtn-github">🐙 GitHub</button>
+        <button class="team-tab-btn" onclick="showTab('tab-anypoint')" id="tabBtn-anypoint">☁ Anypoint</button>
+        <button class="team-tab-btn" onclick="showTab('tab-notify')" id="tabBtn-notify">🔔 Notifications</button>
+      </div>
+    </div>
+  </aside>
+
+  <section class="team-onboarding-main">
+    <div id="tab-member" class="tab-panel">
+      <div class="card" style="margin-bottom:1.5rem;">
+        <div class="card-header admin-card-header">
+          <div>
+            <h2 class="card-title">Add or Assign Team Members</h2>
+            <p class="card-subtitle">Create a new user or select an existing user already present in the platform.</p>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="admin-choice-grid">
+            <label class="choice-card choice-card--active" id="memberNewChoiceCard">
+              <input type="radio" name="memberMode" value="new" id="memberModeNew" checked onchange="toggleMemberMode()" />
+              <div class="choice-card-content">
+                <div class="choice-card-title">Create new user</div>
+                <div class="choice-card-text">Use this when the team member does not exist yet.</div>
+              </div>
+            </label>
+            <label class="choice-card" id="memberExistingChoiceCard">
+              <input type="radio" name="memberMode" value="existing" id="memberModeExisting" onchange="toggleMemberMode()" />
+              <div class="choice-card-content">
+                <div class="choice-card-title">Assign existing user</div>
+                <div class="choice-card-text">Pick a user that already exists and add them to this project.</div>
+              </div>
+            </label>
+          </div>
+
+          <div id="memberNewSection" class="admin-section-panel">
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label" for="memUsername">Username *</label>
+                <input class="form-input" id="memUsername" type="text" placeholder="jsmith" />
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="memEmail">Email *</label>
+                <input class="form-input" id="memEmail" type="email" placeholder="jsmith@company.com" />
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label" for="memFullName">Full Name</label>
+                <input class="form-input" id="memFullName" type="text" placeholder="John Smith" />
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="memPassword">Temporary Password *</label>
+                <input class="form-input" id="memPassword" type="password" placeholder="Minimum 8 characters" />
+              </div>
+            </div>
+          </div>
+
+          <div id="memberExistingSection" class="admin-section-panel" style="display:none;">
+            <div class="form-group">
+              <label class="form-label" for="existingMemberSelect">Select existing users</label>
+              <select class="form-input form-select" id="existingMemberSelect" multiple size="6">
+                {% for u in available_users %}
+                <option value="{{ u.id }}" data-username="{{ u.username }}" data-email="{{ u.email or '' }}">{{ u.username }}{% if u.email %} — {{ u.email }}{% endif %}</option>
+                {% endfor %}
+              </select>
+              <div class="form-hint">Use Ctrl/Cmd + click to select multiple users. Only users not already assigned to the active project are listed here.</div>
+            </div>
+          </div>
+
+          <div class="team-section-card">
+            <div class="team-section-card-header">
+              <div class="table-primary">Feature Access</div>
+              <div class="table-secondary">All selected gives access to the full visible workspace.</div>
+            </div>
+            <div class="feature-grid feature-grid--member">
+              {% set member_features = all_features if all_features else ['incidents', 'dashboard', 'log_viewer', 'observability', 'app_health', 'settings', 'reports'] %}
+              {% for fkey in member_features %}
+              <label class="feature-card">
+                <input type="checkbox" class="mem-feature-cb" value="{{ fkey }}" checked />
+                <span>{{ fkey | replace('_', ' ') | title }}</span>
+              </label>
+              {% endfor %}
+            </div>
+          </div>
+
+          <div class="admin-form-actions">
+            <button class="btn btn-primary" onclick="submitMemberAction()">Save Member Assignment</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header admin-card-header">
+          <div>
+            <h2 class="card-title">Current Team Members</h2>
+            <p class="card-subtitle">Edit access, review assigned users, or remove members from the active project.</p>
+          </div>
+        </div>
+        <div class="card-body admin-table-card-body">
+          {% if team_members %}
+          <div class="table-wrap">
+            <table class="table admin-table">
+              <thead>
+                <tr>
+                  <th>User</th>
+                  <th>Access</th>
+                  <th class="admin-actions-col">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for m in team_members %}
+                <tr>
+                  <td>
+                    <div class="table-primary">{{ m.username }}</div>
+                    <div class="table-secondary">{{ m.email or 'Email not available' }}</div>
+                  </td>
+                  <td>
+                    {% if m.feature_access %}
+                      <div class="table-primary table-primary--sm">{{ m.feature_access | length }} feature(s)</div>
+                      <div class="table-secondary">Restricted access</div>
+                    {% else %}
+                      <div class="table-primary table-primary--sm">Full access</div>
+                      <div class="table-secondary">No restrictions</div>
+                    {% endif %}
+                  </td>
+                  <td>
+                    <div class="table-actions">
+                      <button class="btn btn-ghost btn-sm edit-member-access-btn"
+                        data-uid="{{ m.user_id or m.id }}"
+                        data-uname="{{ m.username | e }}"
+                        data-access="{{ m.feature_access | join(',') if m.feature_access else '' }}">
+                        ✏ Edit Access
+                      </button>
+                      {% if selected_project %}
+                      <button class="btn btn-ghost btn-sm remove-member-btn"
+                        data-uid="{{ m.user_id or m.id }}"
+                        data-uname="{{ m.username | e }}"
+                        data-project="{{ selected_project.id }}">
+                        🗑 Delete
+                      </button>
+                      {% endif %}
+                    </div>
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% else %}
+          <div class="empty-state admin-empty-state admin-empty-state--compact">
+            <div class="empty-state-icon">👥</div>
+            <p class="empty-state-desc">No team members assigned to this project yet.</p>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div id="tab-project" class="tab-panel" style="display:none;">
+      <div class="card">
+        <div class="card-header admin-card-header">
+          <div>
+            <h2 class="card-title">Project Runtime Configuration</h2>
+            <p class="card-subtitle">Manage project-specific runtime overrides directly in Project Configuration.</p>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="form-group">
+            <label class="form-label" for="projectDescription">Project Description</label>
+            <textarea
+              class="form-input"
+              id="projectDescription"
+              rows="4"
+              placeholder="Add a short description for this project"
+            >{{ selected_project.description if selected_project and selected_project.description else '' }}</textarea>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="runtimeOtlpCollectorPort">OpenTelemetry Collector Port</label>
+              <input
+                class="form-input"
+                id="runtimeOtlpCollectorPort"
+                type="number"
+                min="1"
+                max="65535"
+                value="{{ integration_config.get('runtime', {}).get('otlp_collector_port', settings.otlp_collector_port) }}"
+              />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="runtimeDatabasePath">Database Path</label>
+              <input
+                class="form-input"
+                id="runtimeDatabasePath"
+                type="text"
+                value="{{ integration_config.get('runtime', {}).get('database_path', settings.database_path) }}"
+              />
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="runtimePdfOutputDir">PDF Output Directory</label>
+              <input
+                class="form-input"
+                id="runtimePdfOutputDir"
+                type="text"
+                value="{{ integration_config.get('runtime', {}).get('pdf_output_dir', settings.pdf_output_dir) }}"
+              />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="runtimePatchOutputDir">Patch Output Directory</label>
+              <input
+                class="form-input"
+                id="runtimePatchOutputDir"
+                type="text"
+                value="{{ integration_config.get('runtime', {}).get('patch_output_dir', settings.patch_output_dir) }}"
+              />
+            </div>
+          </div>
+          <div class="integration-verification-note" id="runtimeConfigState">
+            Status: {% if integration_config.get('runtime') %}Saved configuration{% else %}Ready to save{% endif %}
+          </div>
+          <div class="admin-form-actions admin-form-actions--split">
+            <button class="btn btn-ghost" id="editBtn-runtime" onclick="toggleRuntimeEditMode()">✏ Edit</button>
+            <button class="btn btn-primary" id="saveBtn-runtime" onclick="saveRuntimeConfig()">💾 Save Project Configuration</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="tab-llm" class="tab-panel" style="display:none;">
+      <div class="card">
+        <div class="card-header admin-card-header">
+          <div>
+            <h2 class="card-title">LLM Provider Configuration</h2>
+            <p class="card-subtitle">Verification must succeed before this configuration can be saved.</p>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="llmProvider">Provider</label>
+              <select class="form-input form-select" id="llmProvider" onchange="toggleCustomProvider(); updateModelOptions();">
+                {% set llm_provider = integration_config.get('llm', {}).get('provider', '') %}
+                {% for provider in ['openai', 'azure_openai', 'anthropic', 'google_gemini', 'mistral', 'cohere', 'groq', 'perplexity', 'together_ai', 'deepseek', 'ollama', 'bedrock', 'hugging_face', 'custom'] %}
+                <option value="{{ provider }}" {% if llm_provider == provider %}selected{% endif %}>{{ provider | replace('_', ' ') | title }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="form-group" id="llmCustomProviderGroup" style="display:none;">
+              <label class="form-label" for="llmCustomProvider">Custom Provider Name</label>
+              <input class="form-input" id="llmCustomProvider" type="text" placeholder="Enter custom provider name" value="{{ integration_config.get('llm', {}).get('custom_provider', '') }}" />
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="llmModelSelect">Model Catalog</label>
+              <select class="form-input form-select" id="llmModelSelect" onchange="toggleCustomModelInput()">
+                <option value="">Select a model</option>
+                <option value="__custom__">Custom model name</option>
+              </select>
+              <div class="form-hint">Shows common market-available models for the selected provider.</div>
+            </div>
+            <div class="form-group" id="llmCustomModelGroup" style="display:none;">
+              <label class="form-label" for="llmModel">Custom Model Name</label>
+              <input class="form-input" id="llmModel" type="text" placeholder="Enter custom model name" value="{{ integration_config.get('llm', {}).get('model', '') }}" />
+            </div>
+            <div class="form-group" id="llmPresetModelGroup">
+              <label class="form-label" for="llmModelPreview">Selected Model</label>
+              <input class="form-input" id="llmModelPreview" type="text" placeholder="Choose a provider and model" value="{{ integration_config.get('llm', {}).get('model', '') }}" readonly />
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="llmApiKey">API Key</label>
+              <input class="form-input" id="llmApiKey" type="password" placeholder="{% if integration_config.get('llm', {}).get('api_key_configured') %}Stored securely — enter to replace{% else %}Provider API key{% endif %}" />
+              <div class="form-hint">{% if integration_config.get('llm', {}).get('api_key_configured') %}An API key is already stored securely for this project. Leave blank to keep the existing key.{% else %}Required for hosted providers. Optional for local Ollama when no auth is needed.{% endif %}</div>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="llmBaseUrl">Base URL</label>
+              <input class="form-input" id="llmBaseUrl" type="text" placeholder="http://localhost:11434 or provider endpoint" value="{{ integration_config.get('llm', {}).get('base_url', '') }}" />
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="llmTemperature">Temperature</label>
+              <input class="form-input" id="llmTemperature" type="number" min="0" max="2" step="0.1" value="{{ integration_config.get('llm', {}).get('temperature', 0.2) }}" />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="llmMaxTokens">Max Tokens</label>
+              <input class="form-input" id="llmMaxTokens" type="number" min="1" step="1" value="{{ integration_config.get('llm', {}).get('max_tokens', 4096) }}" />
+            </div>
+          </div>
+          <div class="integration-verification-note" id="verifyState-llm">Status: Not verified</div>
+          <div class="admin-form-actions admin-form-actions--split">
+            <button class="btn btn-ghost" id="verifyBtn-llm" onclick="testIntegration('llm')">🔌 Verify</button>
+            <div style="display:flex; gap:0.75rem;">
+              <button class="btn btn-ghost" id="editBtn-llm" onclick="toggleIntegrationEdit('llm')">✏ Edit</button>
+              <button class="btn btn-ghost" onclick="deleteIntegration('llm')">🗑 Delete</button>
+              <button class="btn btn-primary" id="saveBtn-llm" onclick="saveIntegration('llm')" disabled>💾 Save</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="tab-jira" class="tab-panel" style="display:none;">
+      <div class="card">
+        <div class="card-header admin-card-header">
+          <div>
+            <h2 class="card-title">Jira Configuration</h2>
+            <p class="card-subtitle">Verify the connection before saving the final Jira settings.</p>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="form-group">
+            <label class="form-label" for="jiraUrl">Jira Base URL *</label>
+            <input class="form-input" id="jiraUrl" type="text" placeholder="https://yourcompany.atlassian.net" value="{{ integration_config.get('jira', {}).get('base_url', '') }}" />
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="jiraUser">Email / Username *</label>
+              <input class="form-input" id="jiraUser" type="text" placeholder="user@company.com" value="{{ integration_config.get('jira', {}).get('username', '') }}" />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="jiraProject">Default Project Key</label>
+              <input class="form-input" id="jiraProject" type="text" placeholder="PROJ" value="{{ integration_config.get('jira', {}).get('project_key', '') }}" />
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="jiraToken">API Token *</label>
+            <input class="form-input" id="jiraToken" type="password" placeholder="Jira API token" />
+          </div>
+          <div class="integration-verification-note" id="verifyState-jira">Status: Not verified</div>
+          <div class="admin-form-actions admin-form-actions--split">
+            <button class="btn btn-ghost" id="verifyBtn-jira" onclick="testIntegration('jira')">🔌 Verify</button>
+            <div style="display:flex; gap:0.75rem;">
+              <button class="btn btn-ghost" id="editBtn-jira" onclick="toggleIntegrationEdit('jira')">✏ Edit</button>
+              <button class="btn btn-ghost" onclick="deleteIntegration('jira')">🗑 Delete</button>
+              <button class="btn btn-primary" id="saveBtn-jira" onclick="saveIntegration('jira')" disabled>💾 Save</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="tab-github" class="tab-panel" style="display:none;">
+      <div class="card">
+        <div class="card-header admin-card-header">
+          <div>
+            <h2 class="card-title">GitHub Configuration</h2>
+            <p class="card-subtitle">Validate access first so only working credentials are persisted.</p>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="form-group">
+            <label class="form-label" for="githubToken">GitHub Token *</label>
+            <input class="form-input" id="githubToken" type="password" placeholder="ghp_… or github_pat_…" />
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="githubOrg">Organisation / Owner</label>
+              <input class="form-input" id="githubOrg" type="text" placeholder="my-org" value="{{ integration_config.get('github', {}).get('org', '') }}" />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="githubBranch">Default Branch</label>
+              <input class="form-input" id="githubBranch" type="text" placeholder="main" value="{{ integration_config.get('github', {}).get('default_branch', 'main') }}" />
+            </div>
+          </div>
+          <div class="integration-verification-note" id="verifyState-github">Status: Not verified</div>
+          <div class="admin-form-actions admin-form-actions--split">
+            <button class="btn btn-ghost" id="verifyBtn-github" onclick="testIntegration('github')">🔌 Verify</button>
+            <div style="display:flex; gap:0.75rem;">
+              <button class="btn btn-ghost" id="editBtn-github" onclick="toggleIntegrationEdit('github')">✏ Edit</button>
+              <button class="btn btn-ghost" onclick="deleteIntegration('github')">🗑 Delete</button>
+              <button class="btn btn-primary" id="saveBtn-github" onclick="saveIntegration('github')" disabled>💾 Save</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="tab-anypoint" class="tab-panel" style="display:none;">
+      <div class="card">
+        <div class="card-header admin-card-header">
+          <div>
+            <h2 class="card-title">Anypoint Platform Configuration</h2>
+            <p class="card-subtitle">Environment selection has been removed; verify credentials before saving.</p>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="anypointClientId">Client ID *</label>
+              <input class="form-input" id="anypointClientId" type="text" placeholder="Anypoint Client ID" value="{{ integration_config.get('anypoint', {}).get('client_id', '') }}" />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="anypointClientSecret">Client Secret *</label>
+              <input class="form-input" id="anypointClientSecret" type="password" placeholder="Anypoint Client Secret" />
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="anypointOrgId">Organisation ID</label>
+            <input class="form-input" id="anypointOrgId" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" value="{{ integration_config.get('anypoint', {}).get('org_id', '') }}" />
+          </div>
+          <div class="integration-verification-note" id="verifyState-anypoint">Status: Not verified</div>
+          <div class="admin-form-actions admin-form-actions--split">
+            <button class="btn btn-ghost" id="verifyBtn-anypoint" onclick="testIntegration('anypoint')">🔌 Verify</button>
+            <div style="display:flex; gap:0.75rem;">
+              <button class="btn btn-ghost" id="editBtn-anypoint" onclick="toggleIntegrationEdit('anypoint')">✏ Edit</button>
+              <button class="btn btn-ghost" onclick="deleteIntegration('anypoint')">🗑 Delete</button>
+              <button class="btn btn-primary" id="saveBtn-anypoint" onclick="saveIntegration('anypoint')" disabled>💾 Save</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="tab-notify" class="tab-panel" style="display:none;">
+      <div class="card" style="margin-bottom:1.5rem;">
+        <div class="card-header admin-card-header">
+          <div>
+            <h2 class="card-title">Slack Configuration</h2>
+            <p class="card-subtitle">Verification is required before saving.</p>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="form-group">
+            <label class="form-label" for="slackWebhook">Webhook URL</label>
+            <input class="form-input" id="slackWebhook" type="text" placeholder="https://hooks.slack.com/services/…" value="{{ integration_config.get('slack', {}).get('webhook_url', '') }}" />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="slackChannel">Default Channel</label>
+            <input class="form-input" id="slackChannel" type="text" placeholder="#incidents" value="{{ integration_config.get('slack', {}).get('channel', '') }}" />
+          </div>
+          <div class="integration-verification-note" id="verifyState-slack">Status: Not verified</div>
+          <div class="admin-form-actions admin-form-actions--split">
+            <button class="btn btn-ghost" id="verifyBtn-slack" onclick="testIntegration('slack')">🔌 Verify</button>
+            <div style="display:flex; gap:0.75rem;">
+              <button class="btn btn-ghost" id="editBtn-slack" onclick="toggleIntegrationEdit('slack')">✏ Edit</button>
+              <button class="btn btn-ghost" onclick="deleteIntegration('slack')">🗑 Delete</button>
+              <button class="btn btn-primary" id="saveBtn-slack" onclick="saveIntegration('slack')" disabled>💾 Save</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header admin-card-header">
+          <div>
+            <h2 class="card-title">Microsoft Teams Configuration</h2>
+            <p class="card-subtitle">Verification is required before saving.</p>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="form-group">
+            <label class="form-label" for="teamsWebhook">Webhook URL</label>
+            <input class="form-input" id="teamsWebhook" type="text" placeholder="https://outlook.office.com/webhook/…" value="{{ integration_config.get('teams', {}).get('webhook_url', '') }}" />
+          </div>
+          <div class="integration-verification-note" id="verifyState-teams">Status: Not verified</div>
+          <div class="admin-form-actions admin-form-actions--split">
+            <button class="btn btn-ghost" id="verifyBtn-teams" onclick="testIntegration('teams')">🔌 Verify</button>
+            <div style="display:flex; gap:0.75rem;">
+              <button class="btn btn-ghost" id="editBtn-teams" onclick="toggleIntegrationEdit('teams')">✏ Edit</button>
+              <button class="btn btn-ghost" onclick="deleteIntegration('teams')">🗑 Delete</button>
+              <button class="btn btn-primary" id="saveBtn-teams" onclick="saveIntegration('teams')" disabled>💾 Save</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div id="memberAccessModal" class="modal-overlay" hidden>
+  <div class="modal modal-md" role="dialog" aria-modal="true">
+    <div class="modal-header">
+      <h3 class="modal-title">Edit Access — <span id="memberAccessUsername"></span></h3>
+      <button class="modal-close" onclick="closeMemberAccessModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="memberAccessUserId" />
+      <div class="feature-grid">
+        {% set modal_features = all_features if all_features else ['incidents', 'dashboard', 'log_viewer', 'observability', 'app_health', 'settings', 'reports'] %}
+        {% for fkey in modal_features %}
+        <label class="feature-card">
+          <input type="checkbox" class="member-access-cb" value="{{ fkey }}" />
+          <span>{{ fkey | replace('_', ' ') | title }}</span>
+        </label>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeMemberAccessModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveMemberAccess()">Save Access</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var runtimeEditMode = false;
+
+var verificationState = {
+  llm: false,
+  jira: false,
+  github: false,
+  anypoint: false,
+  slack: false,
+  teams: false
+};
+
+var integrationEditState = {
+  llm: "{{ 'false' if integration_config.get('llm') else 'true' }}" === 'true',
+  jira: "{{ 'false' if integration_config.get('jira') else 'true' }}" === 'true',
+  github: "{{ 'false' if integration_config.get('github') else 'true' }}" === 'true',
+  anypoint: "{{ 'false' if integration_config.get('anypoint') else 'true' }}" === 'true',
+  slack: "{{ 'false' if integration_config.get('slack') else 'true' }}" === 'true',
+  teams: "{{ 'false' if integration_config.get('teams') else 'true' }}" === 'true'
+};
+
+var integrationFieldMap = {
+  llm: ['llmProvider', 'llmCustomProvider', 'llmModelSelect', 'llmModel', 'llmApiKey', 'llmBaseUrl', 'llmTemperature', 'llmMaxTokens'],
+  jira: ['jiraUrl', 'jiraUser', 'jiraProject', 'jiraToken'],
+  github: ['githubToken', 'githubOrg', 'githubBranch'],
+  anypoint: ['anypointClientId', 'anypointClientSecret', 'anypointOrgId'],
+  slack: ['slackWebhook', 'slackChannel'],
+  teams: ['teamsWebhook']
+};
+
+function showTab(id) {
+  document.querySelectorAll('.tab-panel').forEach(function (el) {
+    el.style.display = 'none';
+  });
+  document.querySelectorAll('.team-tab-btn').forEach(function (btn) {
+    btn.classList.remove('active');
+  });
+  document.getElementById(id).style.display = '';
+  var btnId = 'tabBtn-' + id.replace('tab-', '');
+  var btn = document.getElementById(btnId);
+  if (btn) btn.classList.add('active');
+  if (window.location.hash !== '#' + id) {
+    history.replaceState(null, '', '#' + id);
+  }
+}
+
+function toggleMemberMode() {
+  var isNew = document.getElementById('memberModeNew').checked;
+  document.getElementById('memberNewSection').style.display = isNew ? '' : 'none';
+  document.getElementById('memberExistingSection').style.display = isNew ? 'none' : '';
+  document.getElementById('memberNewChoiceCard').classList.toggle('choice-card--active', isNew);
+  document.getElementById('memberExistingChoiceCard').classList.toggle('choice-card--active', !isNew);
+}
+
+var llmModelCatalog = {
+  openai: [
+    'gpt-5.5',
+    'gpt-5.4',
+    'gpt-5.4-mini',
+    'gpt-5.4-nano',
+    'o4',
+    'o4-mini',
+    'o3',
+    'gpt-4.1',
+    'gpt-4.1-mini',
+    'gpt-4o',
+    'gpt-4o-mini'
+  ],
+  azure_openai: [
+    'gpt-5.5',
+    'gpt-5.4',
+    'gpt-5.4-mini',
+    'gpt-5.4-nano',
+    'gpt-4.1',
+    'gpt-4.1-mini',
+    'gpt-4o',
+    'gpt-4o-mini',
+    'o4',
+    'o4-mini',
+    'o3'
+  ],
+  anthropic: [
+    'claude-opus-4',
+    'claude-sonnet-4',
+    'claude-3-7-sonnet',
+    'claude-3-5-sonnet',
+    'claude-3-5-haiku',
+    'claude-3-opus',
+    'claude-3-sonnet',
+    'claude-3-haiku'
+  ],
+  google_gemini: [
+    'gemini-2.5-pro',
+    'gemini-2.5-flash',
+    'gemini-2.0-flash',
+    'gemini-2.0-flash-lite',
+    'gemini-1.5-pro',
+    'gemini-1.5-flash',
+    'gemini-1.5-flash-8b',
+    'gemma-2-27b-it'
+  ],
+  mistral: [
+    'mistral-large-latest',
+    'pixtral-large-latest',
+    'mistral-medium-latest',
+    'mistral-small-latest',
+    'ministral-8b-latest',
+    'ministral-3b-latest',
+    'codestral-latest',
+    'open-mistral-nemo',
+    'open-mixtral-8x22b',
+    'open-mixtral-8x7b',
+    'open-mistral-7b'
+  ],
+  cohere: [
+    'command-r-plus-08-2024',
+    'command-r-08-2024',
+    'command-r7b-12-2024',
+    'command-light',
+    'embed-v4.0',
+    'embed-english-v3.0',
+    'embed-multilingual-v3.0'
+  ],
+  groq: [
+    'openai/gpt-oss-120b',
+    'openai/gpt-oss-20b',
+    'llama-3.3-70b-versatile',
+    'llama-3.1-8b-instant',
+    'gemma2-9b-it',
+    'mixtral-8x7b-32768',
+    'llama3-70b-8192',
+    'llama3-8b-8192'
+  ],
+  perplexity: [
+    'sonar-pro',
+    'sonar-deep-research',
+    'sonar-reasoning-pro',
+    'sonar-reasoning',
+    'sonar',
+    'r1-1776'
+  ],
+  together_ai: [
+    'deepseek-ai/DeepSeek-R1',
+    'deepseek-ai/DeepSeek-V3',
+    'meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo',
+    'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo',
+    'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo',
+    'Qwen/Qwen2.5-72B-Instruct-Turbo',
+    'Qwen/Qwen2.5-7B-Instruct-Turbo',
+    'mistralai/Mixtral-8x7B-Instruct-v0.1'
+  ],
+  deepseek: [
+    'deepseek-r1',
+    'deepseek-v3',
+    'deepseek-reasoner',
+    'deepseek-chat'
+  ],
+  ollama: [
+    'llama3.3',
+    'llama3.2',
+    'llama3.1',
+    'qwen2.5',
+    'qwen2.5-coder',
+    'phi4',
+    'mistral',
+    'mistral-large',
+    'deepseek-r1'
+  ],
+  bedrock: [
+    'anthropic.claude-opus-4-20250514-v1:0',
+    'anthropic.claude-sonnet-4-20250514-v1:0',
+    'anthropic.claude-3-7-sonnet-20250219-v1:0',
+    'anthropic.claude-3-5-haiku-20241022-v1:0',
+    'amazon.nova-pro-v1:0',
+    'amazon.nova-lite-v1:0',
+    'amazon.nova-micro-v1:0',
+    'meta.llama3-1-70b-instruct-v1:0',
+    'meta.llama3-1-8b-instruct-v1:0',
+    'mistral.mistral-large-2407-v1:0'
+  ],
+  hugging_face: [
+    'meta-llama/Llama-3.1-405B-Instruct',
+    'meta-llama/Llama-3.1-70B-Instruct',
+    'meta-llama/Llama-3.1-8B-Instruct',
+    'Qwen/Qwen2.5-72B-Instruct',
+    'Qwen/Qwen2.5-32B-Instruct',
+    'mistralai/Mixtral-8x22B-Instruct-v0.1',
+    'mistralai/Mistral-7B-Instruct-v0.3',
+    'google/gemma-2-27b-it',
+    'google/gemma-2-9b-it'
+  ],
+  custom: []
+};
+
+function toggleCustomProvider() {
+  var isCustom = document.getElementById('llmProvider').value === 'custom';
+  document.getElementById('llmCustomProviderGroup').style.display = isCustom ? '' : 'none';
+}
+
+function updateModelOptions() {
+  var provider = document.getElementById('llmProvider').value;
+  var modelSelect = document.getElementById('llmModelSelect');
+  var currentValue = document.getElementById('llmModel').value.trim() || document.getElementById('llmModelPreview').value.trim();
+  var models = llmModelCatalog[provider] || [];
+
+  modelSelect.innerHTML = '<option value="">Select a model</option>';
+
+  models.forEach(function (model) {
+    var option = document.createElement('option');
+    option.value = model;
+    option.textContent = model;
+    if (model === currentValue) option.selected = true;
+    modelSelect.appendChild(option);
+  });
+
+  var customOption = document.createElement('option');
+  customOption.value = '__custom__';
+  customOption.textContent = 'Custom model name';
+  if (currentValue && models.indexOf(currentValue) === -1) {
+    customOption.selected = true;
+  }
+  modelSelect.appendChild(customOption);
+
+  toggleCustomModelInput();
+}
+
+function toggleCustomModelInput() {
+  var modelSelect = document.getElementById('llmModelSelect');
+  var customGroup = document.getElementById('llmCustomModelGroup');
+  var previewGroup = document.getElementById('llmPresetModelGroup');
+  var customInput = document.getElementById('llmModel');
+  var previewInput = document.getElementById('llmModelPreview');
+
+  if (modelSelect.value === '__custom__') {
+    customGroup.style.display = '';
+    previewGroup.style.display = 'none';
+    customInput.focus();
+  } else {
+    customGroup.style.display = 'none';
+    previewGroup.style.display = '';
+    previewInput.value = modelSelect.value;
+    customInput.value = modelSelect.value;
+  }
+}
+
+function setRuntimeEditMode(editable) {
+  runtimeEditMode = editable;
+
+  [
+    'projectDescription',
+    'runtimeOtlpCollectorPort',
+    'runtimeDatabasePath',
+    'runtimePdfOutputDir',
+    'runtimePatchOutputDir'
+  ].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el) {
+      el.disabled = !editable;
+    }
+  });
+
+  var editBtn = document.getElementById('editBtn-runtime');
+  var saveBtn = document.getElementById('saveBtn-runtime');
+  var statusEl = document.getElementById('runtimeConfigState');
+
+  if (editBtn) {
+    editBtn.textContent = editable ? 'Cancel' : '✏ Edit';
+  }
+
+  if (saveBtn) {
+    saveBtn.style.display = editable ? '' : 'none';
+  }
+
+  if (statusEl) {
+    if (editable) {
+      statusEl.textContent = 'Status: Editing';
+      statusEl.classList.remove('table-primary');
+    } else {
+      statusEl.textContent = 'Status: Saved configuration';
+      statusEl.classList.add('table-primary');
+    }
+  }
+}
+
+function toggleRuntimeEditMode() {
+  setRuntimeEditMode(!runtimeEditMode);
+}
+
+function getSelectedProjectId() {
+  var el = document.getElementById('configProjectSelect');
+  return el ? el.value : '{{ selected_project.id if selected_project else "" }}';
+}
+
+function getCheckedFeatures(selector) {
+  return Array.from(document.querySelectorAll(selector + ':checked')).map(function (c) {
+    return c.value;
+  });
+}
+
+function getIntegrationPayload(type) {
+  var payload = { project_id: getSelectedProjectId() };
+
+  if (type === 'llm') {
+    payload.provider = document.getElementById('llmProvider').value;
+    payload.custom_provider = document.getElementById('llmCustomProvider').value.trim();
+    payload.api_key = document.getElementById('llmApiKey').value;
+    payload.model = document.getElementById('llmModel').value.trim() || document.getElementById('llmModelPreview').value.trim();
+    payload.base_url = document.getElementById('llmBaseUrl').value.trim();
+    payload.temperature = document.getElementById('llmTemperature').value;
+    payload.max_tokens = document.getElementById('llmMaxTokens').value;
+  } else if (type === 'jira') {
+    payload.base_url = document.getElementById('jiraUrl').value.trim();
+    payload.username = document.getElementById('jiraUser').value.trim();
+    payload.api_token = document.getElementById('jiraToken').value;
+    payload.project_key = document.getElementById('jiraProject').value.trim();
+  } else if (type === 'github') {
+    payload.token = document.getElementById('githubToken').value;
+    payload.org = document.getElementById('githubOrg').value.trim();
+    payload.default_branch = document.getElementById('githubBranch').value.trim();
+  } else if (type === 'anypoint') {
+    payload.client_id = document.getElementById('anypointClientId').value.trim();
+    payload.client_secret = document.getElementById('anypointClientSecret').value;
+    payload.org_id = document.getElementById('anypointOrgId').value.trim();
+  } else if (type === 'slack') {
+    payload.webhook_url = document.getElementById('slackWebhook').value.trim();
+    payload.channel = document.getElementById('slackChannel').value.trim();
+  } else if (type === 'teams') {
+    payload.webhook_url = document.getElementById('teamsWebhook').value.trim();
+  }
+
+  return payload;
+}
+
+function validateIntegrationFields(type) {
+  var payload = getIntegrationPayload(type);
+  if (!payload.project_id) {
+    alert('Please select a project first.');
+    return false;
+  }
+
+  if (type === 'llm') {
+    if (!payload.provider || !payload.model) {
+      alert('Provider and model are required.');
+      return false;
+    }
+    if (payload.provider === 'custom' && !payload.custom_provider) {
+      alert('Custom provider name is required.');
+      return false;
+    }
+    if (payload.temperature && (Number(payload.temperature) < 0 || Number(payload.temperature) > 2)) {
+      alert('Temperature must be between 0 and 2.');
+      return false;
+    }
+    if (payload.max_tokens && Number(payload.max_tokens) < 1) {
+      alert('Max tokens must be greater than 0.');
+      return false;
+    }
+    if (payload.provider === 'azure_openai' && !payload.base_url) {
+      alert('Azure OpenAI base URL is required.');
+      return false;
+    }
+  } else if (type === 'jira') {
+    if (!payload.base_url || !payload.username || !payload.api_token) {
+      alert('Jira base URL, username and API token are required.');
+      return false;
+    }
+  } else if (type === 'github') {
+    if (!payload.token) {
+      alert('GitHub token is required.');
+      return false;
+    }
+  } else if (type === 'anypoint') {
+    if (!payload.client_id || !payload.client_secret) {
+      alert('Anypoint client ID and client secret are required.');
+      return false;
+    }
+  } else if (type === 'slack') {
+    if (!payload.webhook_url) {
+      alert('Slack webhook URL is required.');
+      return false;
+    }
+  } else if (type === 'teams') {
+    if (!payload.webhook_url) {
+      alert('Teams webhook URL is required.');
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function setIntegrationButtons(type, verified) {
+  var verifyBtn = document.getElementById('verifyBtn-' + type);
+  var saveBtn = document.getElementById('saveBtn-' + type);
+
+  if (verifyBtn) {
+    verifyBtn.classList.toggle('btn-success', verified);
+    verifyBtn.classList.toggle('btn-ghost', !verified);
+  }
+
+  if (saveBtn) {
+    saveBtn.disabled = !verified;
+  }
+}
+
+function setVerifyState(type, ok, message) {
+  verificationState[type] = ok;
+  var el = document.getElementById('verifyState-' + type);
+  if (el) {
+    el.textContent = 'Status: ' + message;
+    el.classList.toggle('table-primary', ok);
+  }
+  setIntegrationButtons(type, ok);
+}
+
+function invalidateVerification(type) {
+  if (!verificationState[type]) return;
+  setVerifyState(type, false, 'Not verified');
+}
+
+function setIntegrationEditMode(type, editable) {
+  integrationEditState[type] = editable;
+
+  (integrationFieldMap[type] || []).forEach(function (id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    if (id === 'llmModelPreview') return;
+    el.disabled = !editable;
+  });
+
+  var verifyBtn = document.getElementById('verifyBtn-' + type);
+  var saveBtn = document.getElementById('saveBtn-' + type);
+  var editBtn = document.getElementById('editBtn-' + type);
+
+  if (verifyBtn) verifyBtn.style.display = editable ? '' : 'none';
+  if (saveBtn) saveBtn.style.display = editable ? '' : 'none';
+  if (editBtn) editBtn.textContent = editable ? 'Cancel' : '✏ Edit';
+
+  if (!editable) {
+    verificationState[type] = true;
+    setVerifyState(type, true, 'Saved configuration');
+  } else {
+    verificationState[type] = false;
+    setVerifyState(type, false, 'Editing — verify before saving');
+    if (saveBtn) saveBtn.disabled = true;
+  }
+
+  toggleCustomProvider();
+  toggleCustomModelInput();
+}
+
+function toggleIntegrationEdit(type) {
+  setIntegrationEditMode(type, !integrationEditState[type]);
+}
+
+async function submitMemberAction() {
+  var projectId = getSelectedProjectId();
+  if (!projectId) {
+    alert('Please select a project first.');
+    return;
+  }
+
+  var isNew = document.getElementById('memberModeNew').checked;
+  var features = getCheckedFeatures('.mem-feature-cb');
+  var payload = {
+    feature_access: features,
+    project_ids: [projectId]
+  };
+
+  if (isNew) {
+    payload.username = document.getElementById('memUsername').value.trim();
+    payload.email = document.getElementById('memEmail').value.trim();
+    payload.password = document.getElementById('memPassword').value.trim();
+    payload.full_name = document.getElementById('memFullName').value.trim();
+
+    if (!payload.username || !payload.email || !payload.password) {
+      alert('Username, email and password are required for a new user.');
+      return;
+    }
+
+    const r = await fetch('/api/team-admin/add-member', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const d = await r.json();
+    if (r.ok) {
+      location.reload();
+    } else {
+      alert(d.error || 'Error adding team member');
+    }
+  } else {
+    var existingUserIds = Array.from(document.getElementById('existingMemberSelect').selectedOptions).map(function (option) {
+      return option.value;
+    }).filter(Boolean);
+
+    if (!existingUserIds.length) {
+      alert('Please select at least one existing user.');
+      return;
+    }
+
+    for (const existingUserId of existingUserIds) {
+      const assignResp = await fetch('/api/team-admin/assign-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: existingUserId, project_id: projectId })
+      });
+
+      if (!assignResp.ok) {
+        const assignData = await assignResp.json();
+        alert(assignData.error || 'Error assigning one of the selected users to the project');
+        return;
+      }
+
+      const featureResp = await fetch('/api/team-admin/set-features', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: existingUserId, features: features })
+      });
+
+      if (!featureResp.ok) {
+        const featureData = await featureResp.json();
+        alert(featureData.error || 'Error updating feature access for one of the selected users');
+        return;
+      }
+    }
+
+    location.reload();
+  }
+}
+
+async function saveRuntimeConfig() {
+  var payload = {
+    project_id: getSelectedProjectId(),
+    description: document.getElementById('projectDescription').value.trim(),
+    otlp_collector_port: document.getElementById('runtimeOtlpCollectorPort').value,
+    database_path: document.getElementById('runtimeDatabasePath').value.trim(),
+    pdf_output_dir: document.getElementById('runtimePdfOutputDir').value.trim(),
+    patch_output_dir: document.getElementById('runtimePatchOutputDir').value.trim()
+  };
+
+  if (!payload.project_id) {
+    alert('Please select a project first.');
+    return;
+  }
+
+  var statusEl = document.getElementById('runtimeConfigState');
+  statusEl.textContent = 'Status: Saving...';
+
+  try {
+    const r = await fetch('/api/team-admin/runtime-config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const d = await r.json();
+
+    if (!r.ok || !d.success) {
+      throw new Error(d.error || 'Failed to save project configuration');
+    }
+
+    statusEl.textContent = 'Status: Saved successfully';
+    statusEl.classList.add('table-primary');
+    setRuntimeEditMode(false);
+    alert('Project configuration saved successfully.');
+  } catch (e) {
+    statusEl.textContent = 'Status: ' + e.message;
+    statusEl.classList.remove('table-primary');
+    alert(e.message);
+  }
+}
+
+async function testIntegration(type) {
+  if (!validateIntegrationFields(type)) return;
+
+  try {
+    const r = await fetch('/api/team-admin/integration/' + type + '/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(getIntegrationPayload(type))
+    });
+    const d = await r.json();
+    if (r.ok) {
+      setVerifyState(type, true, d.message || 'Verified successfully');
+      alert(d.message || 'Verification successful');
+    } else {
+      setVerifyState(type, false, d.error || 'Verification failed');
+      alert(d.error || 'Verification failed');
+    }
+  } catch (e) {
+    setVerifyState(type, false, e.message);
+    alert('Network error: ' + e.message);
+  }
+}
+
+async function deleteIntegration(type) {
+  if (!confirm('Delete saved ' + type.toUpperCase() + ' configuration for this project?')) {
+    return;
+  }
+
+  try {
+    const r = await fetch('/api/team-admin/integration/' + type, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_id: getSelectedProjectId() })
+    });
+    const d = await r.json();
+    if (r.ok) {
+      integrationEditState[type] = true;
+      alert(type.toUpperCase() + ' configuration deleted.');
+      location.reload();
+    } else {
+      alert(d.error || 'Error deleting configuration');
+    }
+  } catch (e) {
+    alert('Network error: ' + e.message);
+  }
+}
+
+async function saveIntegration(type) {
+  if (!validateIntegrationFields(type)) return;
+  if (!verificationState[type]) {
+    alert('Please verify this configuration before saving.');
+    return;
+  }
+
+  try {
+    const r = await fetch('/api/team-admin/integration/' + type, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(getIntegrationPayload(type))
+    });
+    const d = await r.json();
+    if (r.ok) {
+      setIntegrationEditMode(type, false);
+      alert(type.toUpperCase() + ' configuration saved.');
+    } else {
+      alert(d.error || 'Error saving configuration');
+    }
+  } catch (e) {
+    alert('Network error: ' + e.message);
+  }
+}
+
+async function saveMemberAccess() {
+  var uid = document.getElementById('memberAccessUserId').value;
+  var features = getCheckedFeatures('.member-access-cb');
+
+  const r = await fetch('/api/team-admin/set-features', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user_id: uid, features: features })
+  });
+
+  if (r.ok) {
+    closeMemberAccessModal();
+    location.reload();
+  } else {
+    const d = await r.json();
+    alert(d.error || 'Error saving access');
+  }
+}
+
+function openMemberAccessModal(uid, uname, accessCsv) {
+  document.getElementById('memberAccessUserId').value = uid;
+  document.getElementById('memberAccessUsername').textContent = uname;
+  var access = accessCsv ? accessCsv.split(',') : [];
+  document.querySelectorAll('.member-access-cb').forEach(function (cb) {
+    cb.checked = access.length === 0 || access.includes(cb.value);
+  });
+  document.getElementById('memberAccessModal').hidden = false;
+}
+
+function closeMemberAccessModal() {
+  document.getElementById('memberAccessModal').hidden = true;
+}
+
+async function removeMember(userId, username, projectId) {
+  if (!confirm('Remove "' + username + '" from this project?')) return;
+
+  const r = await fetch('/api/team-admin/remove-user', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user_id: userId, project_id: projectId })
+  });
+
+  if (r.ok) {
+    location.reload();
+  } else {
+    const d = await r.json();
+    alert(d.error || 'Error removing team member');
+  }
+}
+
+function switchProjectContext(projectId) {
+  fetch('/api/switch-project', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ project_id: projectId })
+  }).then(function (r) {
+    if (!r.ok) {
+      return r.json().then(function (d) {
+        throw new Error(d.message || 'Unable to switch project');
+      });
+    }
+    return r.json();
+  }).then(function () {
+    window.location.href = '/team-admin/onboarding?project_id=' + encodeURIComponent(projectId);
+  }).catch(function (err) {
+    alert(err.message);
+  });
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+  toggleMemberMode();
+  toggleCustomProvider();
+  updateModelOptions();
+
+  ['llm', 'jira', 'github', 'anypoint', 'slack', 'teams'].forEach(function (type) {
+    setIntegrationButtons(type, verificationState[type]);
+  });
+
+  [
+    'llmProvider',
+    'llmCustomProvider',
+    'llmModelSelect',
+    'llmModel',
+    'llmApiKey',
+    'llmBaseUrl',
+    'llmTemperature',
+    'llmMaxTokens',
+    'jiraUrl',
+    'jiraUser',
+    'jiraProject',
+    'jiraToken',
+    'githubToken',
+    'githubOrg',
+    'githubBranch',
+    'anypointClientId',
+    'anypointClientSecret',
+    'anypointOrgId',
+    'slackWebhook',
+    'slackChannel',
+    'teamsWebhook'
+  ].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+
+    var type = id.indexOf('llm') === 0 ? 'llm'
+      : id.indexOf('jira') === 0 ? 'jira'
+      : id.indexOf('github') === 0 ? 'github'
+      : id.indexOf('anypoint') === 0 ? 'anypoint'
+      : id.indexOf('slack') === 0 ? 'slack'
+      : 'teams';
+
+    el.addEventListener('input', function () {
+      invalidateVerification(type);
+    });
+    el.addEventListener('change', function () {
+      invalidateVerification(type);
+    });
+  });
+
+  runtimeEditMode = !document.getElementById('runtimeConfigState').textContent.includes('Saved configuration');
+  setRuntimeEditMode(runtimeEditMode);
+
+  var hash = window.location.hash ? window.location.hash.substring(1) : '';
+  if (hash && document.getElementById(hash)) {
+    showTab(hash);
+  }
+
+  document.querySelectorAll('.edit-member-access-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      openMemberAccessModal(btn.dataset.uid, btn.dataset.uname, btn.dataset.access);
+    });
+  });
+
+  document.querySelectorAll('.remove-member-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      removeMember(btn.dataset.uid, btn.dataset.uname, btn.dataset.project);
+    });
+  });
+
+  ['llm', 'jira', 'github', 'anypoint', 'slack', 'teams'].forEach(function (type) {
+    setIntegrationEditMode(type, integrationEditState[type]);
+  });
+
+  document.getElementById('memberAccessModal').addEventListener('click', function (e) {
+    if (e.target === this) closeMemberAccessModal();
+  });
+});
+</script>
+{% endblock %}

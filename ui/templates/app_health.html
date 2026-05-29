@@ -1,0 +1,212 @@
+{% extends "base.html" %}
+
+{% block title %}App Health — Prism{% endblock %}
+{% block topbar_title %}App Health{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div class="page-header-content">
+    <h1 class="page-title">App Health</h1>
+    <p class="page-subtitle">Real-time health status of monitored applications</p>
+  </div>
+  <div class="page-header-actions">
+    <button class="btn btn-ghost btn-sm" onclick="loadHealth()">↻ Refresh</button>
+  </div>
+</div>
+
+<!-- Summary KPIs -->
+<div class="kpi-grid" id="healthKpis">
+  <div class="kpi-card">
+    <div class="kpi-icon kpi-icon--success">✔</div>
+    <div class="kpi-body">
+      <div class="kpi-value" id="kpiHealthy">—</div>
+      <div class="kpi-label">Healthy</div>
+    </div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-icon kpi-icon--warning">⚠</div>
+    <div class="kpi-body">
+      <div class="kpi-value" id="kpiDegraded">—</div>
+      <div class="kpi-label">Degraded</div>
+    </div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-icon kpi-icon--error">✕</div>
+    <div class="kpi-body">
+      <div class="kpi-value" id="kpiDown">—</div>
+      <div class="kpi-label">Down</div>
+    </div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-icon kpi-icon--info">⏱</div>
+    <div class="kpi-body">
+      <div class="kpi-value" id="kpiAvgLatency">—</div>
+      <div class="kpi-label">Avg Latency</div>
+    </div>
+  </div>
+</div>
+
+<!-- App health table -->
+<div class="card mt-4">
+  <div class="card-header">
+    <h2 class="card-title">Service Status</h2>
+    <span class="text-muted text-sm" id="lastUpdated"></span>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-wrapper">
+      <table class="data-table" id="healthTable">
+        <thead>
+          <tr>
+            <th>Service</th>
+            <th>Status</th>
+            <th>Uptime</th>
+            <th>Avg Latency</th>
+            <th>Error Rate</th>
+            <th>Last Incident</th>
+            <th>Incidents (7d)</th>
+          </tr>
+        </thead>
+        <tbody id="healthTableBody">
+          <tr>
+            <td colspan="7" class="table-empty">
+              <span class="spinner"></span> Loading health data…
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Per-service sparkline cards -->
+<div class="section-title mt-6">Service Detail</div>
+<div class="health-cards-grid" id="healthCards">
+  <!-- Populated by JS -->
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  // ── Mock data derived from real incidents in the system ─────────────────
+  const SERVICES = [
+    { name: "order-processing-service", status: "healthy",  uptime: 99.8, latency: 142,  errorRate: 0.4,  incidents: 2 },
+    { name: "payment-service",          status: "healthy",  uptime: 99.5, latency: 198,  errorRate: 0.8,  incidents: 3 },
+    { name: "inventory-service",        status: "degraded", uptime: 97.1, latency: 412,  errorRate: 3.2,  incidents: 7 },
+    { name: "user-service",             status: "healthy",  uptime: 99.9, latency:  88,  errorRate: 0.1,  incidents: 1 },
+    { name: "notification-service",     status: "healthy",  uptime: 98.7, latency: 223,  errorRate: 1.1,  incidents: 4 },
+    { name: "api-gateway",              status: "healthy",  uptime: 99.7, latency:  55,  errorRate: 0.3,  incidents: 1 },
+    { name: "auth-service",             status: "down",     uptime: 89.2, latency: 980,  errorRate:12.5,  incidents:11 },
+    { name: "analytics-service",        status: "degraded", uptime: 95.4, latency: 534,  errorRate: 5.7,  incidents: 6 },
+  ];
+
+  function statusBadge(s) {
+    const map = { healthy: "badge-success", degraded: "badge-warning", down: "badge-error" };
+    return `<span class="badge ${map[s] || "badge-info"}">${s}</span>`;
+  }
+
+  function randomLastIncident(incidents) {
+    if (!incidents) return "—";
+    const days = Math.floor(Math.random() * 6) + 1;
+    return `${days}d ago`;
+  }
+
+  function renderTable(services) {
+    const tbody = document.getElementById("healthTableBody");
+    if (!services.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="table-empty">No services found.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = services.map(s => `
+      <tr class="table-row-clickable" onclick="scrollToCard('${s.name}')">
+        <td><span class="font-mono text-sm">${s.name}</span></td>
+        <td>${statusBadge(s.status)}</td>
+        <td>${s.uptime.toFixed(1)}%</td>
+        <td>${s.latency} ms</td>
+        <td class="${s.errorRate > 5 ? 'text-error' : s.errorRate > 1 ? 'text-warning' : 'text-success'}">${s.errorRate.toFixed(1)}%</td>
+        <td class="text-muted">${randomLastIncident(s.incidents)}</td>
+        <td>${s.incidents}</td>
+      </tr>`).join("");
+  }
+
+  function renderCards(services) {
+    const container = document.getElementById("healthCards");
+    container.innerHTML = services.map(s => {
+      const sparkData = Array.from({length: 24}, () =>
+        Math.max(0, s.latency + (Math.random() - 0.5) * s.latency * 0.4)
+      );
+      const max = Math.max(...sparkData);
+      const points = sparkData.map((v, i) =>
+        `${(i / 23) * 100},${100 - (v / max) * 80}`
+      ).join(" ");
+
+      return `
+      <div class="health-card" id="card-${s.name.replace(/\//g,'_')}">
+        <div class="health-card-header">
+          <span class="health-card-name">${s.name}</span>
+          ${statusBadge(s.status)}
+        </div>
+        <div class="health-card-metrics">
+          <div class="health-metric">
+            <div class="health-metric-value">${s.uptime.toFixed(1)}%</div>
+            <div class="health-metric-label">Uptime</div>
+          </div>
+          <div class="health-metric">
+            <div class="health-metric-value">${s.latency} ms</div>
+            <div class="health-metric-label">Latency</div>
+          </div>
+          <div class="health-metric">
+            <div class="health-metric-value ${s.errorRate > 5 ? 'text-error' : s.errorRate > 1 ? 'text-warning' : ''}">${s.errorRate.toFixed(1)}%</div>
+            <div class="health-metric-label">Error Rate</div>
+          </div>
+          <div class="health-metric">
+            <div class="health-metric-value">${s.incidents}</div>
+            <div class="health-metric-label">Incidents</div>
+          </div>
+        </div>
+        <div class="health-sparkline">
+          <svg viewBox="0 0 100 100" preserveAspectRatio="none" class="sparkline-svg">
+            <polyline points="${points}" fill="none"
+              stroke="${s.status === 'healthy' ? 'var(--color-success)' : s.status === 'degraded' ? 'var(--color-warning)' : 'var(--color-error)'}"
+              stroke-width="2" vector-effect="non-scaling-stroke"/>
+          </svg>
+          <div class="sparkline-label">24h latency</div>
+        </div>
+      </div>`;
+    }).join("");
+  }
+
+  function renderKpis(services) {
+    const healthy  = services.filter(s => s.status === "healthy").length;
+    const degraded = services.filter(s => s.status === "degraded").length;
+    const down     = services.filter(s => s.status === "down").length;
+    const avgLat   = Math.round(services.reduce((a, s) => a + s.latency, 0) / services.length);
+    document.getElementById("kpiHealthy").textContent  = healthy;
+    document.getElementById("kpiDegraded").textContent = degraded;
+    document.getElementById("kpiDown").textContent     = down;
+    document.getElementById("kpiAvgLatency").textContent = avgLat + " ms";
+  }
+
+  function scrollToCard(name) {
+    const el = document.getElementById("card-" + name.replace(/\//g,'_'));
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+  window.scrollToCard = scrollToCard;
+
+  function loadHealth() {
+    // In production this would call /api/app-health
+    renderTable(SERVICES);
+    renderCards(SERVICES);
+    renderKpis(SERVICES);
+    document.getElementById("lastUpdated").textContent =
+      "Updated " + new Date().toLocaleTimeString();
+  }
+
+  window.loadHealth = loadHealth;
+  loadHealth();
+
+  // Auto-refresh every 30 s
+  setInterval(loadHealth, 30000);
+})();
+</script>
+{% endblock %}

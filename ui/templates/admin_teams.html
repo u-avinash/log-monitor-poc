@@ -1,0 +1,260 @@
+{% extends "base.html" %}
+
+{% block title %}Teams — Prism Admin{% endblock %}
+{% block topbar_title %}Teams{% endblock %}
+
+{% block topbar_actions %}
+<button class="btn btn-primary btn-sm" id="newTeamBtn">+ New Team</button>
+{% endblock %}
+
+{% block content %}
+<div class="page-content">
+
+  <!-- ── KPI Row ── -->
+  <div class="kpi-row">
+    <div class="kpi-card">
+      <div class="kpi-label">Total Teams</div>
+      <div class="kpi-value">6</div>
+      <div class="kpi-delta kpi-delta--up">+1 this month</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Total Members</div>
+      <div class="kpi-value">34</div>
+      <div class="kpi-delta kpi-delta--up">+4</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">On-Call Now</div>
+      <div class="kpi-value">6</div>
+      <div class="kpi-delta">1 per team</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Pending Approvals</div>
+      <div class="kpi-value">3</div>
+      <div class="kpi-delta kpi-delta--down">-2</div>
+    </div>
+  </div>
+
+  <!-- ── Teams Table ── -->
+  <div class="section-card">
+    <div class="section-header">
+      <h3 class="section-title">Teams</h3>
+      <div class="section-actions">
+        <input type="search" class="input-search" id="teamSearch" placeholder="Search teams…" />
+      </div>
+    </div>
+    <div class="table-wrapper">
+      <table class="data-table" id="teamsTable">
+        <thead>
+          <tr>
+            <th>Team</th>
+            <th>Members</th>
+            <th>On-Call</th>
+            <th>Projects</th>
+            <th>Incidents (30d)</th>
+            <th>MTTR</th>
+            <th class="col-actions">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="teamsTableBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── Members Panel ── -->
+  <div class="section-card" id="membersPanel" style="display:none">
+    <div class="section-header">
+      <h3 class="section-title" id="membersPanelTitle">Members</h3>
+      <div class="section-actions">
+        <button class="btn btn-primary btn-sm" id="inviteMemberBtn">+ Invite Member</button>
+        <button class="btn btn-ghost btn-sm" id="closeMembersPanel">✕ Close</button>
+      </div>
+    </div>
+    <div class="table-wrapper">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Role</th>
+            <th>Joined</th>
+            <th>Last Active</th>
+            <th class="col-actions">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="membersTableBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── New Team Modal ── -->
+  <div class="modal-backdrop" id="teamModal" style="display:none">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 class="modal-title">New Team</h3>
+        <button class="modal-close" id="closeTeamModal">✕</button>
+      </div>
+      <div class="modal-body">
+        <form id="teamForm" class="form-grid">
+          <div class="form-field">
+            <label class="form-label">Team Name *</label>
+            <input type="text" class="form-input" id="teamName" placeholder="e.g. Platform Engineering" required />
+          </div>
+          <div class="form-field">
+            <label class="form-label">Team Lead Email</label>
+            <input type="email" class="form-input" id="teamLead" placeholder="lead@company.com" />
+          </div>
+          <div class="form-field form-field--full">
+            <label class="form-label">Description</label>
+            <textarea class="form-input form-textarea" id="teamDesc" placeholder="Team purpose…" rows="2"></textarea>
+          </div>
+          <div class="form-field form-field--full">
+            <label class="form-label">Default Role for New Members</label>
+            <select class="form-input" id="teamDefaultRole">
+              <option value="viewer">Viewer</option>
+              <option value="developer" selected>Developer</option>
+              <option value="lead">Team Lead</option>
+              <option value="admin">Admin</option>
+            </select>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" id="cancelTeamModal">Cancel</button>
+        <button class="btn btn-primary" id="saveTeam">Create Team</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  "use strict";
+  const $ = id => document.getElementById(id);
+
+  const TEAMS = [
+    { id:1, name:"Platform Engineering", lead:"alice@example.com",  members:8,  oncall:"Alice M.",  projects:3, incidents:52, mttr:35 },
+    { id:2, name:"Backend Services",     lead:"bob@example.com",    members:10, oncall:"Bob K.",    projects:4, incidents:61, mttr:48 },
+    { id:3, name:"Data Engineering",     lead:"carol@example.com",  members:6,  oncall:"Carol P.",  projects:2, incidents:18, mttr:42 },
+    { id:4, name:"Frontend",             lead:"dave@example.com",   members:5,  oncall:"Dave R.",   projects:2, incidents:9,  mttr:20 },
+    { id:5, name:"Security",             lead:"eve@example.com",    members:3,  oncall:"Eve S.",    projects:1, incidents:4,  mttr:25 },
+    { id:6, name:"DevOps/SRE",           lead:"frank@example.com",  members:4,  oncall:"Frank T.",  projects:4, incidents:30, mttr:18 },
+  ];
+
+  const MEMBERS_BY_TEAM = {
+    1: [
+      { name:"Alice M.",   email:"alice@example.com",  role:"Lead",      joined:"2024-01-15", lastActive:"2 min ago" },
+      { name:"John D.",    email:"john@example.com",   role:"Developer", joined:"2024-03-01", lastActive:"1 hr ago"  },
+      { name:"Sarah W.",   email:"sarah@example.com",  role:"Developer", joined:"2024-04-10", lastActive:"Today"     },
+    ],
+    2: [
+      { name:"Bob K.",     email:"bob@example.com",    role:"Lead",      joined:"2024-01-20", lastActive:"5 min ago" },
+      { name:"Mike L.",    email:"mike@example.com",   role:"Developer", joined:"2024-02-14", lastActive:"Today"     },
+      { name:"Nina P.",    email:"nina@example.com",   role:"Developer", joined:"2024-05-01", lastActive:"Yesterday" },
+    ],
+    3: [
+      { name:"Carol P.",   email:"carol@example.com",  role:"Lead",      joined:"2024-02-01", lastActive:"30 min ago"},
+      { name:"Liam S.",    email:"liam@example.com",   role:"Developer", joined:"2024-06-01", lastActive:"Today"     },
+    ],
+    4: [
+      { name:"Dave R.",    email:"dave@example.com",   role:"Lead",      joined:"2024-03-10", lastActive:"1 hr ago"  },
+      { name:"Zara T.",    email:"zara@example.com",   role:"Developer", joined:"2024-07-01", lastActive:"Today"     },
+    ],
+    5: [
+      { name:"Eve S.",     email:"eve@example.com",    role:"Lead",      joined:"2024-04-01", lastActive:"Today"     },
+    ],
+    6: [
+      { name:"Frank T.",   email:"frank@example.com",  role:"Lead",      joined:"2024-01-05", lastActive:"Just now"  },
+      { name:"Gina U.",    email:"gina@example.com",   role:"Developer", joined:"2024-05-15", lastActive:"Today"     },
+    ],
+  };
+
+  const ROLE_CLS = { Lead:"badge--warning", Admin:"badge--danger", Developer:"badge--info", Viewer:"badge--neutral" };
+
+  function renderTeams(list) {
+    $("teamsTableBody").innerHTML = list.map(t => `
+      <tr>
+        <td>
+          <div style="display:flex;align-items:center;gap:10px">
+            <div class="team-avatar">${t.name.slice(0,2).toUpperCase()}</div>
+            <div>
+              <div><strong>${t.name}</strong></div>
+              <div class="text-muted" style="font-size:0.75rem">${t.lead}</div>
+            </div>
+          </div>
+        </td>
+        <td>${t.members}</td>
+        <td><span class="badge badge--success">${t.oncall}</span></td>
+        <td>${t.projects}</td>
+        <td>${t.incidents}</td>
+        <td>${t.mttr} min</td>
+        <td class="col-actions">
+          <button class="btn btn-xs btn-ghost" onclick="showMembers(${t.id})" title="View members">👥</button>
+          <button class="btn btn-xs btn-ghost" title="Edit">✏</button>
+          <button class="btn btn-xs btn-ghost" title="Settings">⚙</button>
+        </td>
+      </tr>
+    `).join("");
+  }
+
+  window.showMembers = function(teamId) {
+    const team    = TEAMS.find(t => t.id === teamId);
+    const members = MEMBERS_BY_TEAM[teamId] || [];
+    $("membersPanelTitle").textContent = `${team.name} — Members`;
+    $("membersTableBody").innerHTML = members.map(m => `
+      <tr>
+        <td>
+          <div style="display:flex;align-items:center;gap:8px">
+            <div class="member-avatar">${m.name.slice(0,2).toUpperCase()}</div>
+            <strong>${m.name}</strong>
+          </div>
+        </td>
+        <td class="text-muted">${m.email}</td>
+        <td><span class="badge ${ROLE_CLS[m.role]||'badge--neutral'}">${m.role}</span></td>
+        <td class="text-muted">${m.joined}</td>
+        <td class="text-muted">${m.lastActive}</td>
+        <td class="col-actions">
+          <button class="btn btn-xs btn-ghost" title="Change role">✏</button>
+          <button class="btn btn-xs btn-ghost" title="Remove" style="color:var(--danger)">✕</button>
+        </td>
+      </tr>
+    `).join("");
+    $("membersPanel").style.display = "block";
+    $("membersPanel").scrollIntoView({ behavior:"smooth" });
+  };
+
+  function initModal() {
+    const modal = $("teamModal");
+    $("newTeamBtn").addEventListener("click",    () => modal.style.display = "flex");
+    $("closeTeamModal").addEventListener("click", () => modal.style.display = "none");
+    $("cancelTeamModal").addEventListener("click",() => modal.style.display = "none");
+    modal.addEventListener("click", e => { if (e.target === modal) modal.style.display = "none"; });
+    $("saveTeam").addEventListener("click", () => {
+      const name = $("teamName").value.trim();
+      if (!name) { $("teamName").focus(); return; }
+      alert(`Team "${name}" created! (demo)`);
+      modal.style.display = "none";
+      $("teamForm").reset();
+    });
+    $("closeMembersPanel").addEventListener("click", () => {
+      $("membersPanel").style.display = "none";
+    });
+  }
+
+  function init() {
+    renderTeams(TEAMS);
+    $("teamSearch").addEventListener("input", () => {
+      const q = $("teamSearch").value.toLowerCase();
+      renderTeams(TEAMS.filter(t => t.name.toLowerCase().includes(q) || t.lead.toLowerCase().includes(q)));
+    });
+    initModal();
+  }
+
+  document.readyState === "loading"
+    ? document.addEventListener("DOMContentLoaded", init)
+    : init();
+})();
+</script>
+{% endblock %}

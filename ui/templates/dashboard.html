@@ -1,0 +1,1122 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard — Prism{% endblock %}
+{% block topbar_title %}{% endblock %}
+
+{% block content %}
+{% set feature_meta = {
+  "dashboard": {"label": "Overview", "icon": "📊", "href": "/dashboard", "desc": "KPIs, severity trends, and recent activity.", "category": "core"},
+  
+  "incidents": {"label": "Incidents", "icon": "🚨", "href": "/incidents", "desc": "Browse all incidents and investigate details.", "category": "core"},
+  "observability": {"label": "Observability", "icon": "📈", "href": "/observability", "desc": "Service metrics, APIs, and telemetry visibility.", "category": "monitoring"},
+  "traces": {"label": "Traces", "icon": "🧵", "href": "/traces", "desc": "Follow distributed Mule flow traces and span failures.", "category": "monitoring"},
+  "metrics": {"label": "Metrics", "icon": "📏", "href": "/metrics", "desc": "Track latency, traffic, worker CPU, and memory trends.", "category": "monitoring"},
+  "api_analytics": {"label": "API Analytics", "icon": "🛰️", "href": "/api-analytics", "desc": "Review API usage, policy hits, latency, and consumers.", "category": "monitoring"},
+  "app_health": {"label": "App Health", "icon": "❤️", "href": "/app-health", "desc": "Check runtime health of monitored services.", "category": "monitoring"},
+  "log_viewer": {"label": "Logs", "icon": "📝", "href": "/logs", "desc": "Inspect logs and trace operational issues.", "category": "monitoring"},
+  "audit": {"label": "Audit Trail", "icon": "📚", "href": "/audit", "desc": "Track Jira, GitHub, Slack, Teams, and system activity.", "category": "operations"},
+  "settings": {"label": "Settings", "icon": "⚙️", "href": "/settings", "desc": "View environment and runtime configuration.", "category": "operations"}
+} %}
+{% set allowed_features = user_features or ['dashboard', 'incidents'] %}
+{% set non_dashboard_features = allowed_features | reject('equalto', 'dashboard') | list %}
+{% set workspace_features = [] %}
+{% for feature_key in allowed_features %}
+  {% set feature = feature_meta.get(feature_key) %}
+  {% if feature and feature_key != 'dashboard' %}
+    {% set _ = workspace_features.append({"key": feature_key, "label": feature.label, "icon": feature.icon, "href": feature.href, "desc": feature.desc, "category": feature.category}) %}
+  {% endif %}
+{% endfor %}
+{% set monitoring_features = workspace_features | selectattr('category', 'equalto', 'monitoring') | list %}
+{% set operations_features = workspace_features | selectattr('category', 'equalto', 'operations') | list %}
+{% set core_features = workspace_features | selectattr('category', 'equalto', 'core') | list %}
+{% set sev_total = (stats.critical + stats.high + stats.medium + stats.low) or 1 %}
+
+<div class="dashboard-shell">
+  <div class="page-header dashboard-header dashboard-header--compact">
+    <div class="dashboard-header__copy">
+      <div class="dashboard-eyebrow">User workspace</div>
+      <p class="page-subtitle">Everything you can access for the current project is available here through tabs.</p>
+    </div>
+
+    <div class="dashboard-project-panel dashboard-project-panel--inline">
+      <div class="dashboard-project-panel__main">
+        <div class="dashboard-project-panel__top">
+          {% if my_projects %}
+          <select id="projectSwitcher" class="form-select dashboard-project-switcher__select dashboard-project-switcher__select--inline" aria-label="Switch current project">
+            {% for project in my_projects %}
+            <option value="{{ project.id }}" {% if selected_project and project.id == selected_project.id %}selected{% endif %}>
+              {{ project.name }}
+            </option>
+            {% endfor %}
+          </select>
+          {% elif selected_project %}
+          <div class="dashboard-project-panel__name dashboard-project-panel__name--static">
+            {{ selected_project.name }}
+          </div>
+          {% else %}
+          <div class="dashboard-project-panel__name dashboard-project-panel__name--static">
+            No project assigned
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="dashboard-hero">
+    <div class="dashboard-hero__content">
+      <div class="dashboard-eyebrow">MuleSoft operations workspace</div>
+      <h1 class="dashboard-hero__title">User control center for incidents, telemetry and API operations</h1>
+      <p class="dashboard-hero__desc">
+        Access the enabled monitoring and operations modules for the selected project from one place.
+      </p>
+    </div>
+    <div class="dashboard-hero__summary">
+      <div class="dashboard-hero__metric">
+        <span class="dashboard-hero__metric-value">{{ workspace_features | length }}</span>
+        <span class="dashboard-hero__metric-label">Enabled modules</span>
+      </div>
+      <div class="dashboard-hero__metric">
+        <span class="dashboard-hero__metric-value">{{ monitoring_features | length }}</span>
+        <span class="dashboard-hero__metric-label">Monitoring views</span>
+      </div>
+      <div class="dashboard-hero__metric">
+        <span class="dashboard-hero__metric-value">{{ operations_features | length }}</span>
+        <span class="dashboard-hero__metric-label">Operations views</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="dashboard-quick-grid">
+    {% for feature in monitoring_features[:4] %}
+    <a class="dashboard-quick-card" href="{{ feature.href }}">
+      <span class="dashboard-quick-card__icon">{{ feature.icon }}</span>
+      <span class="dashboard-quick-card__title">{{ feature.label }}</span>
+      <span class="dashboard-quick-card__desc">{{ feature.desc }}</span>
+    </a>
+    {% endfor %}
+  </div>
+
+  <div class="dashboard-tabs-wrap">
+    <div class="tabs dashboard-tabs" id="dashboardTabs" role="tablist" aria-label="Dashboard sections">
+      <button class="tab tab--active" type="button" data-tab="overview">Overview</button>
+      <button class="tab" type="button" data-tab="workspace">Workspace</button>
+      {% if monitoring_features %}
+      <button class="tab" type="button" data-tab="monitoring-suite">Monitoring suite</button>
+      {% endif %}
+      {% if operations_features %}
+      <button class="tab" type="button" data-tab="operations-suite">Operations suite</button>
+      {% endif %}
+      {% if 'incidents' in allowed_features %}
+      <button class="tab" type="button" data-tab="recent-incidents">Recent incidents</button>
+      {% endif %}
+      {% if stats.pending_approval %}
+      <button class="tab" type="button" data-tab="pending-review">Pending approval</button>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="tab-panel tab-panel--active" data-panel="overview">
+    <div class="dashboard-overview-stack">
+      <div class="stats-grid dashboard-stats-grid" id="statsGrid">
+        <div class="stat-card">
+          <div class="stat-card-label">Total Incidents</div>
+          <div class="stat-card-value" id="statTotal">{{ stats.total }}</div>
+          <div class="stat-card-delta">Across your visible workspace</div>
+        </div>
+
+        <div class="stat-card stat-card--critical">
+          <div class="stat-card-label">Critical</div>
+          <div class="stat-card-value" id="statCritical">{{ stats.critical }}</div>
+          <div class="stat-card-delta">Requires immediate attention</div>
+        </div>
+
+        <div class="stat-card stat-card--warning">
+          <div class="stat-card-label">Pending Approval</div>
+          <div class="stat-card-value" id="statPending">{{ stats.pending_approval }}</div>
+          <div class="stat-card-delta">Awaiting your review</div>
+        </div>
+
+        <div class="stat-card stat-card--success">
+          <div class="stat-card-label">Completed</div>
+          <div class="stat-card-value" id="statCompleted">{{ stats.completed }}</div>
+          <div class="stat-card-delta">Resolved or PR created</div>
+        </div>
+
+        <div class="stat-card">
+          <div class="stat-card-label">PRs Created</div>
+          <div class="stat-card-value" id="statPRs">{{ stats.prs_created }}</div>
+          <div class="stat-card-delta">GitHub pull requests</div>
+        </div>
+
+        <div class="stat-card">
+          <div class="stat-card-label">Jira Tickets</div>
+          <div class="stat-card-value" id="statJira">{{ stats.jira_created }}</div>
+          <div class="stat-card-delta">Tickets filed</div>
+        </div>
+      </div>
+
+      <div class="dashboard-detail-grid">
+        <div class="card dashboard-card">
+          <div class="section-header dashboard-section-header">
+            <div>
+              <h2 class="section-title">Severity breakdown</h2>
+              <p class="dashboard-section-subtitle">Distribution of incidents by priority level.</p>
+            </div>
+          </div>
+
+          <div class="dashboard-severity-grid">
+            {% set critical_count = stats.by_severity.get('CRITICAL', 0) %}
+            {% set critical_pct = (critical_count / sev_total * 100) | round(1) %}
+            <div class="dashboard-severity-card">
+              <div class="dashboard-severity-card__top">
+                <span class="badge badge-critical">CRITICAL</span>
+                <span class="dashboard-severity-card__pct">{{ critical_pct }}%</span>
+              </div>
+              <div class="dashboard-severity-card__count">{{ critical_count }}</div>
+              <div class="progress-bar-track dashboard-progress-track">
+                <div class="progress-bar-fill progress-bar--critical" style="width:{{ critical_pct }}%; height:100%;"></div>
+              </div>
+              <div class="dashboard-severity-card__foot">{{ critical_count }} of {{ stats.total or 0 }} incidents</div>
+            </div>
+
+            {% set high_count = stats.by_severity.get('HIGH', 0) %}
+            {% set high_pct = (high_count / sev_total * 100) | round(1) %}
+            <div class="dashboard-severity-card">
+              <div class="dashboard-severity-card__top">
+                <span class="badge badge-high">HIGH</span>
+                <span class="dashboard-severity-card__pct">{{ high_pct }}%</span>
+              </div>
+              <div class="dashboard-severity-card__count">{{ high_count }}</div>
+              <div class="progress-bar-track dashboard-progress-track">
+                <div class="progress-bar-fill progress-bar--high" style="width:{{ high_pct }}%; height:100%;"></div>
+              </div>
+              <div class="dashboard-severity-card__foot">{{ high_count }} of {{ stats.total or 0 }} incidents</div>
+            </div>
+
+            {% set medium_count = stats.by_severity.get('MEDIUM', 0) %}
+            {% set medium_pct = (medium_count / sev_total * 100) | round(1) %}
+            <div class="dashboard-severity-card">
+              <div class="dashboard-severity-card__top">
+                <span class="badge badge-medium">MEDIUM</span>
+                <span class="dashboard-severity-card__pct">{{ medium_pct }}%</span>
+              </div>
+              <div class="dashboard-severity-card__count">{{ medium_count }}</div>
+              <div class="progress-bar-track dashboard-progress-track">
+                <div class="progress-bar-fill progress-bar--medium" style="width:{{ medium_pct }}%; height:100%;"></div>
+              </div>
+              <div class="dashboard-severity-card__foot">{{ medium_count }} of {{ stats.total or 0 }} incidents</div>
+            </div>
+
+            {% set low_count = stats.by_severity.get('LOW', 0) %}
+            {% set low_pct = (low_count / sev_total * 100) | round(1) %}
+            <div class="dashboard-severity-card">
+              <div class="dashboard-severity-card__top">
+                <span class="badge badge-low">LOW</span>
+                <span class="dashboard-severity-card__pct">{{ low_pct }}%</span>
+              </div>
+              <div class="dashboard-severity-card__count">{{ low_count }}</div>
+              <div class="progress-bar-track dashboard-progress-track">
+                <div class="progress-bar-fill progress-bar--low" style="width:{{ low_pct }}%; height:100%;"></div>
+              </div>
+              <div class="dashboard-severity-card__foot">{{ low_count }} of {{ stats.total or 0 }} incidents</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card dashboard-card">
+          <div class="section-header dashboard-section-header">
+            <div>
+              <h2 class="section-title">Project snapshot</h2>
+              <p class="dashboard-section-subtitle">Quick context for the project you are working in.</p>
+            </div>
+          </div>
+
+          <div class="project-snapshot project-snapshot--dense">
+            <div class="project-snapshot__row">
+              <span class="project-snapshot__label">Project</span>
+              <span class="project-snapshot__value">{{ selected_project.name if selected_project else '—' }}</span>
+            </div>
+            <div class="project-snapshot__row">
+              <span class="project-snapshot__label">Environment</span>
+              <span class="project-snapshot__value">{{ selected_project.environment if selected_project else '—' }}</span>
+            </div>
+            <div class="project-snapshot__row">
+              <span class="project-snapshot__label">Stack</span>
+              <span class="project-snapshot__value">{{ selected_project.stack if selected_project and selected_project.stack else 'Not provided' }}</span>
+            </div>
+            <div class="project-snapshot__row">
+              <span class="project-snapshot__label">Description</span>
+              <span class="project-snapshot__value">{{ selected_project.description if selected_project and selected_project.description else 'No description available.' }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tab-panel" data-panel="workspace" hidden>
+    <div class="card dashboard-card">
+      <div class="section-header dashboard-section-header">
+        <div>
+          <h2 class="section-title">Workspace access</h2>
+          <p class="dashboard-section-subtitle">All enabled features are grouped once here for faster navigation.</p>
+        </div>
+      </div>
+
+      {% if workspace_features %}
+      <div class="dashboard-feature-groups">
+        {% if core_features %}
+        <div class="dashboard-feature-group">
+          <div class="dashboard-feature-group__header">
+            <h3 class="dashboard-feature-group__title">Core workflow</h3>
+            <p class="dashboard-feature-group__desc">Incident investigation and essential workspace access.</p>
+          </div>
+          <div class="dashboard-feature-grid">
+            {% for feature in core_features %}
+            <a class="dashboard-feature-card" href="{{ feature.href }}">
+              <div class="dashboard-feature-card__icon">{{ feature.icon }}</div>
+              <div class="dashboard-feature-card__title">{{ feature.label }}</div>
+              <div class="dashboard-feature-card__desc">{{ feature.desc }}</div>
+              <div class="dashboard-feature-card__action">Open {{ feature.label }} →</div>
+            </a>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+
+        {% if monitoring_features %}
+        <div class="dashboard-feature-group">
+          <div class="dashboard-feature-group__header">
+            <h3 class="dashboard-feature-group__title">Monitoring and observability</h3>
+            <p class="dashboard-feature-group__desc">Logs, health, traces, metrics and API visibility for Mule applications.</p>
+          </div>
+          <div class="dashboard-feature-grid">
+            {% for feature in monitoring_features %}
+            <a class="dashboard-feature-card dashboard-feature-card--monitoring" href="{{ feature.href }}">
+              <div class="dashboard-feature-card__icon">{{ feature.icon }}</div>
+              <div class="dashboard-feature-card__title">{{ feature.label }}</div>
+              <div class="dashboard-feature-card__desc">{{ feature.desc }}</div>
+              <div class="dashboard-feature-card__action">Open {{ feature.label }} →</div>
+            </a>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+
+        {% if operations_features %}
+        <div class="dashboard-feature-group">
+          <div class="dashboard-feature-group__header">
+            <h3 class="dashboard-feature-group__title">Operations and governance</h3>
+            <p class="dashboard-feature-group__desc">Auditability, platform actions and runtime configuration visibility.</p>
+          </div>
+          <div class="dashboard-feature-grid">
+            {% for feature in operations_features %}
+            <a class="dashboard-feature-card dashboard-feature-card--operations" href="{{ feature.href }}">
+              <div class="dashboard-feature-card__icon">{{ feature.icon }}</div>
+              <div class="dashboard-feature-card__title">{{ feature.label }}</div>
+              <div class="dashboard-feature-card__desc">{{ feature.desc }}</div>
+              <div class="dashboard-feature-card__action">Open {{ feature.label }} →</div>
+            </a>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+      </div>
+      {% else %}
+      <div class="empty-state">
+        <div class="empty-state-icon">🧭</div>
+        <div class="empty-state-title">No additional features assigned</div>
+        <div class="empty-state-desc">Your Team Admin can assign more workspace features if needed.</div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if monitoring_features %}
+  <div class="tab-panel" data-panel="monitoring-suite" hidden>
+    <div class="card dashboard-card">
+      <div class="section-header dashboard-section-header">
+        <div>
+          <h2 class="section-title">Monitoring suite</h2>
+          <p class="dashboard-section-subtitle">Telemetry-focused modules available for the selected MuleSoft project.</p>
+        </div>
+      </div>
+
+        <div class="dashboard-monitoring-grid">
+          {% for feature in monitoring_features %}
+          <a class="dashboard-monitoring-card" href="{{ feature.href }}">
+            <div class="dashboard-monitoring-card__icon">{{ feature.icon }}</div>
+            <div class="dashboard-monitoring-card__body">
+              <div class="dashboard-monitoring-card__title">{{ feature.label }}</div>
+              <div class="dashboard-monitoring-card__desc">{{ feature.desc }}</div>
+            </div>
+            <div class="dashboard-monitoring-card__action">Open &rarr;</div>
+          </a>
+          {% endfor %}
+        </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if operations_features %}
+  <div class="tab-panel" data-panel="operations-suite" hidden>
+    <div class="card dashboard-card">
+      <div class="section-header dashboard-section-header">
+        <div>
+          <h2 class="section-title">Operations suite</h2>
+          <p class="dashboard-section-subtitle">Governance, audit and runtime-oriented modules available in your workspace.</p>
+        </div>
+      </div>
+
+        <div class="dashboard-ops-grid">
+          {% for feature in operations_features %}
+          <a class="dashboard-ops-card" href="{{ feature.href }}">
+            <div class="dashboard-ops-card__icon">{{ feature.icon }}</div>
+            <div class="dashboard-ops-card__title">{{ feature.label }}</div>
+            <div class="dashboard-ops-card__desc">{{ feature.desc }}</div>
+            <div class="dashboard-ops-card__action">Open {{ feature.label }} &rarr;</div>
+          </a>
+          {% endfor %}
+        </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if 'incidents' in allowed_features %}
+  <div class="tab-panel" data-panel="recent-incidents" hidden>
+    <div class="card dashboard-card">
+      <div class="section-header dashboard-section-header">
+        <div>
+          <h2 class="section-title">Recent incidents</h2>
+          <p class="dashboard-section-subtitle">Latest incident activity for quick triage.</p>
+        </div>
+        <a href="/incidents" class="btn btn-ghost btn-sm">View all →</a>
+      </div>
+
+      {% if recent_incidents %}
+      <div class="incident-list" id="recentList">
+        {% for inc in recent_incidents %}
+        <a href="/incidents/{{ inc.incident_id }}" class="incident-row" data-id="{{ inc.incident_id }}">
+          <div class="incident-row-severity">
+            <span class="badge {{ inc.severity | severity_badge }}">{{ inc.severity or '—' }}</span>
+          </div>
+          <div class="incident-row-body">
+            <div class="incident-row-title">{{ inc.error_title or 'Untitled Incident' }}</div>
+            <div class="incident-row-meta">
+              <span class="incident-row-app">{{ inc.app_name }}</span>
+              <span class="incident-row-sep">·</span>
+              <span class="incident-row-time">{{ inc.created_at | fmt_dt }}</span>
+              {% if inc.repo_full_name %}
+              <span class="incident-row-sep">·</span>
+              <span class="incident-row-repo">{{ inc.repo_full_name }}</span>
+              {% endif %}
+            </div>
+          </div>
+          <div class="incident-row-status">
+            <span class="badge {{ inc.status | status_badge }}">{{ (inc.status or 'UNKNOWN').replace('_', ' ') }}</span>
+          </div>
+        </a>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="empty-state">
+        <div class="empty-state-icon">📭</div>
+        <div class="empty-state-title">No incidents yet</div>
+        <div class="empty-state-desc">Incidents will appear here once the ingestion API receives data.</div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if stats.pending_approval %}
+  <div class="tab-panel" data-panel="pending-review" hidden>
+    <div class="card dashboard-card">
+      <div class="section-header dashboard-section-header">
+        <div>
+          <h2 class="section-title">Pending approval queue</h2>
+          <p class="dashboard-section-subtitle">Incidents waiting for a review decision.</p>
+        </div>
+        {% if 'incidents' in allowed_features %}
+        <a href="/incidents?status=PENDING_APPROVAL" class="btn btn-ghost btn-sm">Open queue →</a>
+        {% endif %}
+      </div>
+
+      {% set pending_items = recent_incidents | selectattr('status', 'equalto', 'PENDING_APPROVAL') | list %}
+      {% if pending_items %}
+      <div class="incident-list">
+        {% for inc in pending_items %}
+        <a href="/incidents/{{ inc.incident_id }}" class="incident-row">
+          <div class="incident-row-severity">
+            <span class="badge {{ inc.severity | severity_badge }}">{{ inc.severity or '—' }}</span>
+          </div>
+          <div class="incident-row-body">
+            <div class="incident-row-title">{{ inc.error_title or 'Untitled Incident' }}</div>
+            <div class="incident-row-meta">
+              <span class="incident-row-app">{{ inc.app_name }}</span>
+              <span class="incident-row-sep">·</span>
+              <span class="incident-row-time">{{ inc.created_at | fmt_dt }}</span>
+            </div>
+          </div>
+          <div class="incident-row-status">
+            <span class="badge badge-warning">Pending approval</span>
+          </div>
+        </a>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="empty-state empty-state--compact">
+        <div class="empty-state-icon">✅</div>
+        <div class="empty-state-title">Nothing pending in the recent queue</div>
+        <div class="empty-state-desc">There are approval items in the overall stats, but none are present in the latest incident list.</div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+<style>
+  .dashboard-shell {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
+
+  .dashboard-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+  }
+
+  .dashboard-header--compact {
+    padding-bottom: 0;
+  }
+
+  .dashboard-header__copy {
+    min-width: 0;
+  }
+
+  .dashboard-eyebrow {
+    font-size: .75rem;
+    font-weight: 700;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--accent, #7c3aed);
+    margin-bottom: .35rem;
+  }
+
+  .dashboard-project-panel {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    min-width: 340px;
+    max-width: 720px;
+    padding: .9rem 1rem;
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 18px;
+    background: linear-gradient(135deg, rgba(124,58,237,.08), rgba(79,70,229,.03));
+    box-shadow: 0 12px 30px rgba(15, 23, 42, .05);
+  }
+
+  .dashboard-project-panel__main {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .dashboard-project-panel__top {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: .9rem;
+  }
+
+  .dashboard-project-switcher__label,
+  .dashboard-section-subtitle {
+    color: var(--text-muted, #6b7280);
+  }
+
+  .dashboard-project-panel__name {
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: var(--text-primary, #111827);
+  }
+
+  .dashboard-project-panel__name--static {
+    min-height: 48px;
+    display: inline-flex;
+    align-items: center;
+    padding: 0 1rem;
+    border: 1px solid var(--border, #d8dee9);
+    border-radius: 14px;
+    background: #fff;
+  }
+
+  .dashboard-project-switcher {
+    display: flex;
+    flex-direction: column;
+    gap: .35rem;
+    min-width: 250px;
+  }
+
+  .dashboard-project-switcher__label {
+    font-size: .8rem;
+    font-weight: 600;
+  }
+
+  .dashboard-project-switcher__select--inline {
+    min-width: 320px;
+    max-width: 420px;
+    height: 48px;
+    padding: 0 2.75rem 0 1rem;
+    border-radius: 14px;
+    border: 1px solid rgba(124, 58, 237, .18);
+    background: #fff;
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: var(--text-primary, #111827);
+    box-shadow: 0 6px 18px rgba(15, 23, 42, .05);
+  }
+
+  .dashboard-project-switcher__select--inline:focus {
+    border-color: rgba(124, 58, 237, .45);
+    box-shadow: 0 0 0 4px rgba(124, 58, 237, .12);
+    outline: none;
+  }
+
+  .dashboard-hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1.7fr) minmax(260px, .85fr);
+    gap: 1rem;
+    padding: 1.15rem 1.2rem;
+    border: 1px solid rgba(124, 58, 237, .14);
+    border-radius: 22px;
+    background: linear-gradient(135deg, rgba(124,58,237,.10), rgba(79,70,229,.04), rgba(14,165,233,.04));
+    box-shadow: 0 16px 38px rgba(15, 23, 42, .06);
+  }
+
+  .dashboard-hero__title {
+    margin: 0;
+    font-size: 1.7rem;
+    line-height: 1.15;
+    color: var(--text-primary, #111827);
+  }
+
+  .dashboard-hero__desc {
+    margin: .65rem 0 0;
+    max-width: 60ch;
+    color: var(--text-muted, #6b7280);
+    line-height: 1.6;
+  }
+
+  .dashboard-hero__summary {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: .75rem;
+    align-self: stretch;
+  }
+
+  .dashboard-hero__metric {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: .3rem;
+    padding: .9rem;
+    border-radius: 18px;
+    background: rgba(255,255,255,.74);
+    border: 1px solid rgba(148, 163, 184, .18);
+  }
+
+  .dashboard-hero__metric-value {
+    font-size: 1.45rem;
+    font-weight: 800;
+    color: var(--text-primary, #111827);
+  }
+
+  .dashboard-hero__metric-label {
+    font-size: .82rem;
+    color: var(--text-muted, #6b7280);
+  }
+
+  .dashboard-quick-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: .9rem;
+  }
+
+  .dashboard-quick-card {
+    display: flex;
+    flex-direction: column;
+    gap: .5rem;
+    padding: 1rem;
+    border-radius: 18px;
+    border: 1px solid var(--border, #e5e7eb);
+    background: #fff;
+    text-decoration: none;
+    color: inherit;
+    transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+  }
+
+  .dashboard-quick-card:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 12px 28px rgba(15, 23, 42, .07);
+    border-color: rgba(14, 165, 233, .34);
+  }
+
+  .dashboard-quick-card__icon {
+    font-size: 1.2rem;
+  }
+
+  .dashboard-quick-card__title {
+    font-weight: 700;
+    color: var(--text-primary, #111827);
+  }
+
+  .dashboard-quick-card__desc {
+    font-size: .86rem;
+    color: var(--text-muted, #6b7280);
+    line-height: 1.45;
+  }
+
+  .dashboard-tabs-wrap {
+    border-bottom: 1px solid var(--border, #e5e7eb);
+  }
+
+  .dashboard-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .4rem;
+  }
+
+  .dashboard-overview-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .dashboard-stats-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
+  .dashboard-detail-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.65fr) minmax(320px, .95fr);
+    gap: 1rem;
+    align-items: start;
+  }
+
+  .dashboard-card {
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .dashboard-section-header {
+    padding: 1rem 1.1rem 0;
+    margin-bottom: .9rem;
+  }
+
+  .dashboard-section-subtitle {
+    margin: .25rem 0 0;
+    font-size: .9rem;
+  }
+
+  .dashboard-severity-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: .9rem;
+    padding: 0 1.1rem 1.1rem;
+  }
+
+  .dashboard-severity-card {
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 16px;
+    padding: 1rem;
+    background: var(--bg-secondary, #fff);
+  }
+
+  .dashboard-severity-card__top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .75rem;
+    margin-bottom: .75rem;
+  }
+
+  .dashboard-severity-card__pct {
+    font-size: .86rem;
+    font-weight: 700;
+    color: var(--text-secondary, #475569);
+  }
+
+  .dashboard-severity-card__count {
+    font-size: 2rem;
+    line-height: 1;
+    font-weight: 800;
+    color: var(--text-primary, #111827);
+    margin-bottom: .75rem;
+  }
+
+  .dashboard-progress-track {
+    height: 6px;
+    margin-bottom: .6rem;
+  }
+
+  .dashboard-severity-card__foot {
+    font-size: .82rem;
+    color: var(--text-muted, #6b7280);
+  }
+
+  .project-snapshot {
+    display: flex;
+    flex-direction: column;
+    gap: .8rem;
+    padding: 0 1.1rem 1.1rem;
+  }
+
+  .project-snapshot__row {
+    display: grid;
+    grid-template-columns: 108px minmax(0, 1fr);
+    gap: .75rem;
+    align-items: start;
+    padding-bottom: .75rem;
+    border-bottom: 1px solid rgba(148, 163, 184, .18);
+  }
+
+  .project-snapshot__row:last-child {
+    padding-bottom: 0;
+    border-bottom: none;
+  }
+
+  .project-snapshot__label {
+    font-size: .8rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: var(--text-muted, #6b7280);
+  }
+
+  .project-snapshot__value {
+    color: var(--text-primary, #111827);
+    line-height: 1.5;
+  }
+
+  .dashboard-feature-groups {
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+    padding: 0 1.1rem 1.1rem;
+  }
+
+  .dashboard-feature-group {
+    display: flex;
+    flex-direction: column;
+    gap: .8rem;
+  }
+
+  .dashboard-feature-group__header {
+    display: flex;
+    flex-direction: column;
+    gap: .25rem;
+  }
+
+  .dashboard-feature-group__title {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 800;
+    color: var(--text-primary, #111827);
+  }
+
+  .dashboard-feature-group__desc {
+    margin: 0;
+    font-size: .88rem;
+    color: var(--text-muted, #6b7280);
+  }
+
+  .dashboard-feature-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1rem;
+  }
+
+  .dashboard-feature-card {
+    display: flex;
+    flex-direction: column;
+    gap: .8rem;
+    padding: 1rem;
+    border-radius: 18px;
+    border: 1px solid var(--border, #e5e7eb);
+    background: #fff;
+    text-decoration: none;
+    color: inherit;
+    transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+  }
+
+  .dashboard-feature-card:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 12px 28px rgba(15, 23, 42, .07);
+    border-color: rgba(124, 58, 237, .35);
+  }
+
+  .dashboard-feature-card--monitoring:hover {
+    border-color: rgba(14, 165, 233, .38);
+  }
+
+  .dashboard-feature-card--operations:hover {
+    border-color: rgba(16, 185, 129, .34);
+  }
+
+  .dashboard-feature-card__icon {
+    width: 2.6rem;
+    height: 2.6rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 14px;
+    background: rgba(124,58,237,.10);
+    font-size: 1.2rem;
+    flex-shrink: 0;
+  }
+
+  .dashboard-feature-card__title {
+    font-weight: 700;
+    color: var(--text-primary, #111827);
+  }
+
+  .dashboard-feature-card__desc {
+    font-size: .88rem;
+    line-height: 1.45;
+    color: var(--text-muted, #6b7280);
+  }
+
+  .dashboard-feature-card__action {
+    font-size: .86rem;
+    font-weight: 700;
+    color: var(--accent, #7c3aed);
+    white-space: nowrap;
+  }
+
+  .dashboard-monitoring-grid,
+  .dashboard-ops-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 1rem;
+    padding: 0 1.1rem 1.1rem;
+  }
+
+  .dashboard-monitoring-card,
+  .dashboard-ops-card {
+    display: flex;
+    align-items: flex-start;
+    gap: .9rem;
+    padding: 1rem;
+    border-radius: 18px;
+    border: 1px solid var(--border, #e5e7eb);
+    background: #fff;
+    text-decoration: none;
+    color: inherit;
+    transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+  }
+
+  .dashboard-monitoring-card:hover,
+  .dashboard-ops-card:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 12px 28px rgba(15, 23, 42, .07);
+  }
+
+  .dashboard-monitoring-card:hover {
+    border-color: rgba(14, 165, 233, .34);
+  }
+
+  .dashboard-ops-card:hover {
+    border-color: rgba(16, 185, 129, .34);
+  }
+
+  .dashboard-monitoring-card__icon,
+  .dashboard-ops-card__icon {
+    width: 2.75rem;
+    height: 2.75rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 14px;
+    background: rgba(124,58,237,.10);
+    flex-shrink: 0;
+    font-size: 1.2rem;
+  }
+
+  .dashboard-monitoring-card__body {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .dashboard-monitoring-card__title,
+  .dashboard-ops-card__title {
+    font-weight: 700;
+    color: var(--text-primary, #111827);
+    margin-bottom: .25rem;
+  }
+
+  .dashboard-monitoring-card__desc,
+  .dashboard-ops-card__desc {
+    font-size: .88rem;
+    line-height: 1.45;
+    color: var(--text-muted, #6b7280);
+  }
+
+  .dashboard-monitoring-card__action,
+  .dashboard-ops-card__action {
+    font-size: .84rem;
+    font-weight: 700;
+    color: var(--accent, #7c3aed);
+    white-space: nowrap;
+    align-self: center;
+  }
+
+  .empty-state--compact {
+    margin: 0 1.1rem 1.1rem;
+  }
+
+  @media (max-width: 1200px) {
+    .dashboard-stats-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .dashboard-detail-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .dashboard-quick-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .dashboard-hero {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (max-width: 960px) {
+    .dashboard-header {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .dashboard-project-panel {
+      flex-direction: column;
+      align-items: stretch;
+      min-width: 0;
+    }
+
+    .dashboard-project-panel__top {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .dashboard-project-switcher {
+      min-width: 0;
+    }
+
+    .dashboard-project-switcher__select--inline {
+      min-width: 0;
+      max-width: none;
+      width: 100%;
+    }
+
+    .dashboard-severity-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .dashboard-hero__summary {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .dashboard-stats-grid,
+    .dashboard-severity-grid,
+    .dashboard-feature-grid,
+    .dashboard-quick-grid,
+    .dashboard-monitoring-grid,
+    .dashboard-ops-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .dashboard-tabs {
+      overflow-x: auto;
+      flex-wrap: nowrap;
+      padding-bottom: .35rem;
+    }
+
+    .dashboard-monitoring-card,
+    .dashboard-ops-card {
+      flex-direction: column;
+    }
+
+    .dashboard-monitoring-card__action,
+    .dashboard-ops-card__action {
+      align-self: flex-start;
+    }
+
+    .project-snapshot__row {
+      grid-template-columns: 1fr;
+      gap: .35rem;
+    }
+  }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  window.prism.startPolling('/api/stats', 30000, function(data) {
+    document.getElementById('statTotal').textContent = data.total ?? '—';
+    document.getElementById('statCritical').textContent = data.critical ?? '—';
+    document.getElementById('statPending').textContent = data.pending_approval ?? '—';
+    document.getElementById('statCompleted').textContent = data.completed ?? '—';
+    document.getElementById('statPRs').textContent = data.prs_created ?? '—';
+    document.getElementById('statJira').textContent = data.jira_created ?? '—';
+  });
+
+  (function() {
+    const refreshBtn = document.getElementById('refreshBtn');
+    if (refreshBtn) {
+      refreshBtn.addEventListener('click', function() {
+        window.location.reload();
+      });
+    }
+
+    const tabs = Array.from(document.querySelectorAll('#dashboardTabs [data-tab]'));
+    const panels = Array.from(document.querySelectorAll('.tab-panel'));
+
+    tabs.forEach(function(tab) {
+      tab.addEventListener('click', function() {
+        const target = tab.getAttribute('data-tab');
+        tabs.forEach(function(item) {
+          item.classList.toggle('tab--active', item === tab);
+        });
+        panels.forEach(function(panel) {
+          const active = panel.getAttribute('data-panel') === target;
+          panel.classList.toggle('tab-panel--active', active);
+          panel.hidden = !active;
+        });
+      });
+    });
+
+    const projectSwitcher = document.getElementById('projectSwitcher');
+    if (projectSwitcher) {
+      projectSwitcher.addEventListener('change', async function() {
+        const projectId = projectSwitcher.value;
+        if (!projectId) return;
+        const response = await fetch('/api/switch-project', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project_id: projectId })
+        });
+        if (response.ok) {
+          window.location.reload();
+        }
+      });
+    }
+  })();
+</script>
+{% endblock %}

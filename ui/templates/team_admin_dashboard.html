@@ -1,0 +1,306 @@
+{% extends "base.html" %}
+{% block title %}Team Admin Dashboard — Prism{% endblock %}
+{% block topbar_title %}{% endblock %}
+
+{% block content %}
+{% set selected_project = selected_project if selected_project is defined else (projects[0] if projects else None) %}
+{% set team_members = team_users if team_users is defined else [] %}
+{% set integrations_configured = integrations_configured | default(0) %}
+{% set open_incidents = open_incidents | default(0) %}
+{% set resolved_incidents = resolved_incidents | default(0) %}
+{% set integration_status = integration_status | default({}) %}
+
+<div class="page-header admin-page-header">
+  <div>
+    <h1 class="page-title">Team Admin Dashboard</h1>
+    <p class="page-subtitle">Manage project members, integrations, and access from one focused page.</p>
+  </div>
+  <div class="page-header-actions team-project-switcher">
+    {% if projects and projects|length > 1 %}
+    <span class="badge badge-info">{{ projects|length }} projects</span>
+    {% endif %}
+    {% if projects %}
+    <select id="projectSelector" class="form-input admin-project-select" onchange="switchProject(this.value)">
+      {% for p in projects %}
+      <option value="{{ p.id }}" {% if selected_project and p.id == selected_project.id %}selected{% endif %}>
+        {{ p.name }}
+      </option>
+      {% endfor %}
+    </select>
+    {% endif %}
+  </div>
+</div>
+
+<div class="stats-grid team-admin-stats-grid">
+  <div class="stat-card admin-stat-card">
+    <div class="admin-stat-top">
+      <span class="stat-label">Members</span>
+      <span class="stat-icon">👥</span>
+    </div>
+    <div class="stat-value">{{ team_members | length }}</div>
+  </div>
+  <div class="stat-card admin-stat-card">
+    <div class="admin-stat-top">
+      <span class="stat-label">Integrations</span>
+      <span class="stat-icon">🔗</span>
+    </div>
+    <div class="stat-value">{{ integrations_configured }}</div>
+  </div>
+  <div class="stat-card admin-stat-card">
+    <div class="admin-stat-top">
+      <span class="stat-label">Open Incidents</span>
+      <span class="stat-icon">🚨</span>
+    </div>
+    <div class="stat-value">{{ open_incidents }}</div>
+  </div>
+  <div class="stat-card admin-stat-card">
+    <div class="admin-stat-top">
+      <span class="stat-label">Resolved Today</span>
+      <span class="stat-icon">✅</span>
+    </div>
+    <div class="stat-value">{{ resolved_incidents }}</div>
+  </div>
+</div>
+
+<div class="admin-dashboard-grid">
+  <section class="card admin-main-card">
+    <div class="card-header admin-card-header">
+      <div>
+        <h2 class="card-title">Team Members</h2>
+        <p class="card-subtitle">Manage project users and access.</p>
+      </div>
+      {% if selected_project %}
+      <a href="/team-admin/onboarding?project_id={{ selected_project.id }}#tab-member" class="btn btn-sm btn-primary">Manage Members</a>
+      {% endif %}
+    </div>
+    <div class="card-body admin-table-card-body">
+      {% if team_members %}
+      <div class="table-wrap">
+        <table class="table admin-table">
+          <thead>
+            <tr>
+              <th>User</th>
+              <th>Role</th>
+              <th>Access</th>
+              <th class="admin-actions-col">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for m in team_members %}
+            <tr>
+              <td>
+                <div class="table-primary">{{ m.username }}</div>
+                <div class="table-secondary">{{ m.email or 'Email not available' }}</div>
+              </td>
+              <td><span class="badge badge-info">{{ m.role | replace('_', ' ') | title }}</span></td>
+              <td>
+                {% if m.feature_access %}
+                  <div class="table-primary table-primary--sm">{{ m.feature_access | length }} feature(s)</div>
+                {% else %}
+                  <div class="table-primary table-primary--sm">Full access</div>
+                {% endif %}
+              </td>
+              <td>
+                <div class="table-actions">
+                  <a class="btn btn-ghost btn-sm" href="/team-admin/onboarding?project_id={{ selected_project.id if selected_project else '' }}#tab-member">✏ Edit</a>
+                  <button class="btn btn-ghost btn-sm manage-access-btn"
+                    data-uid="{{ m.user_id or m.id }}"
+                    data-uname="{{ m.username | e }}"
+                    data-access="{{ m.feature_access | join(',') if m.feature_access else '' }}">
+                    🔑 Access
+                  </button>
+                  {% if selected_project %}
+                  <button class="btn btn-ghost btn-sm team-remove-btn"
+                    data-uid="{{ m.user_id or m.id }}"
+                    data-uname="{{ m.username | e }}"
+                    data-project="{{ selected_project.id }}">
+                    🗑 Remove
+                  </button>
+                  {% endif %}
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="empty-state admin-empty-state">
+        <div class="empty-state-icon">👥</div>
+        <p class="empty-state-title">No team members assigned to this project</p>
+        {% if selected_project %}
+        <a href="/team-admin/onboarding?project_id={{ selected_project.id }}#tab-member" class="btn btn-primary">Manage members</a>
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+  </section>
+
+  <div class="dashboard-side-stack">
+    <section class="card">
+      <div class="card-header admin-card-header">
+        <div>
+          <h2 class="card-title">Integration Status</h2>
+          <p class="card-subtitle">Current setup state for the active project.</p>
+        </div>
+        {% if selected_project %}
+        <a href="/team-admin/onboarding?project_id={{ selected_project.id }}#tab-llm" class="btn btn-sm btn-ghost">Configure</a>
+        {% endif %}
+      </div>
+      <div class="card-body admin-side-body">
+        {% set integrations = [
+          ('llm', '🤖', 'LLM Provider'),
+          ('jira', '📋', 'Jira'),
+          ('github', '🐙', 'GitHub'),
+          ('anypoint', '☁', 'Anypoint Platform'),
+          ('slack', '💬', 'Slack'),
+          ('teams', '🟦', 'MS Teams')
+        ] %}
+        <div class="integration-list">
+          {% for key, icon, label in integrations %}
+          <div class="integration-row">
+            <div class="integration-copy">
+              <span class="integration-icon">{{ icon }}</span>
+              <span class="integration-label">{{ label }}</span>
+            </div>
+            {% if integration_status and integration_status.get(key) %}
+              <span class="badge badge-success">Verified</span>
+            {% else %}
+              <a href="/team-admin/onboarding?project_id={{ selected_project.id if selected_project else '' }}#tab-{{ 'notify' if key in ['slack', 'teams'] else key }}" class="badge badge-warning integration-link">Needs setup</a>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<div id="accessModal" class="modal-overlay" hidden>
+  <div class="modal modal-md" role="dialog" aria-modal="true">
+    <div class="modal-header">
+      <h3 class="modal-title">Manage Access — <span id="accessModalUsername"></span></h3>
+      <button class="modal-close" onclick="closeAccessModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="accessUserId" />
+      <div id="featureCheckboxes" class="feature-grid">
+        {% set all_features = [
+          ('incidents', '🚨 Incidents'),
+          ('dashboard', '📊 Dashboard'),
+          ('log_viewer', '📜 Log Viewer'),
+          ('observability', '🔭 Observability'),
+          ('app_health', '💚 App Health'),
+          ('settings', '⚙ Settings'),
+          ('reports', '📄 Reports')
+        ] %}
+        {% for fkey, flabel in all_features %}
+        <label class="feature-card">
+          <input type="checkbox" class="feature-cb" value="{{ fkey }}" />
+          <span>{{ flabel }}</span>
+        </label>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeAccessModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveAccess()">Save Access</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  document.querySelectorAll('.manage-access-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      const uid = btn.dataset.uid;
+      const uname = btn.dataset.uname;
+      const access = btn.dataset.access ? btn.dataset.access.split(',') : [];
+
+      document.getElementById('accessUserId').value = uid;
+      document.getElementById('accessModalUsername').textContent = uname;
+
+      document.querySelectorAll('.feature-cb').forEach(function (cb) {
+        cb.checked = access.length === 0 || access.includes(cb.value);
+      });
+
+      document.getElementById('accessModal').hidden = false;
+    });
+  });
+
+  document.querySelectorAll('.team-remove-btn').forEach(function (btn) {
+    btn.addEventListener('click', async function () {
+      if (!confirm('Remove "' + btn.dataset.uname + '" from this project?')) return;
+
+      const r = await fetch('/api/team-admin/remove-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: btn.dataset.uid, project_id: btn.dataset.project })
+      });
+
+      if (r.ok) {
+        location.reload();
+      } else {
+        const d = await r.json();
+        alert(d.error || 'Error removing team member');
+      }
+    });
+  });
+
+  document.getElementById('accessModal').addEventListener('click', function (e) {
+    if (e.target === this) closeAccessModal();
+  });
+});
+
+function closeAccessModal() {
+  document.getElementById('accessModal').hidden = true;
+}
+
+async function saveAccess() {
+  const uid = document.getElementById('accessUserId').value;
+  const features = Array.from(document.querySelectorAll('.feature-cb:checked')).map(function (c) {
+    return c.value;
+  });
+
+  const r = await fetch('/api/team-admin/set-features', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user_id: uid, features: features })
+  });
+
+  if (r.ok) {
+    closeAccessModal();
+    location.reload();
+  } else {
+    const d = await r.json();
+    alert(d.error || 'Error saving access');
+  }
+}
+
+async function switchProject(projectId) {
+  projectId = projectId || document.getElementById('projectSelector').value;
+  if (!projectId) {
+    alert('Please choose a project.');
+    return;
+  }
+
+  try {
+    const r = await fetch('/api/switch-project', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_id: projectId })
+    });
+    const d = await r.json();
+    if (!r.ok || !d.success) {
+      throw new Error(d.message || 'Unable to switch project');
+    }
+    window.location.assign('/team-admin/dashboard?project_id=' + encodeURIComponent(projectId) + '&ts=' + Date.now());
+  } catch (err) {
+    alert(err.message);
+  }
+}
+</script>
+{% endblock %}

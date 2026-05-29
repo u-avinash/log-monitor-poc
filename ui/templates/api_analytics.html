@@ -1,0 +1,256 @@
+{% extends "base.html" %}
+
+{% block title %}API Analytics — Prism{% endblock %}
+{% block topbar_title %}API Analytics{% endblock %}
+
+{% block topbar_actions %}
+<span class="topbar-status">
+  <span class="status-dot status-dot--online"></span>
+  <span class="status-label">Anypoint API Data</span>
+</span>
+<select class="select-sm" id="analyticsEnvFilter">
+  <option value="">All environments</option>
+  {% for env in analytics_summary.environments %}
+  <option value="{{ env }}">{{ env }}</option>
+  {% endfor %}
+</select>
+<button class="btn btn-ghost btn-sm" id="analyticsExportBtn">↓ Export</button>
+{% endblock %}
+
+{% block content %}
+<div class="page-content analytics-page">
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">API analytics for MuleSoft applications</h1>
+      <p class="page-subtitle">Track usage, policy hits, latency, failures, and consumer traffic for managed Mule APIs.</p>
+    </div>
+  </div>
+
+  <div class="stats-grid analytics-stats-grid">
+    <div class="stat-card">
+      <div class="stat-card-label">Managed APIs</div>
+      <div class="stat-card-value">{{ analytics_summary.managed_apis }}</div>
+      <div class="stat-card-delta">Connected in selected scope</div>
+    </div>
+    <div class="stat-card stat-card--warning">
+      <div class="stat-card-label">Policy Violations</div>
+      <div class="stat-card-value">{{ analytics_summary.policy_violations }}</div>
+      <div class="stat-card-delta">Across rate-limit and auth policies</div>
+    </div>
+    <div class="stat-card stat-card--critical">
+      <div class="stat-card-label">5xx Responses</div>
+      <div class="stat-card-value">{{ analytics_summary.server_errors }}</div>
+      <div class="stat-card-delta">Detected on managed APIs</div>
+    </div>
+    <div class="stat-card stat-card--success">
+      <div class="stat-card-label">Avg Latency</div>
+      <div class="stat-card-value">{{ analytics_summary.avg_latency_ms }} ms</div>
+      <div class="stat-card-delta">Consumer-to-gateway average</div>
+    </div>
+  </div>
+
+  <div class="analytics-layout">
+    <div class="card">
+      <div class="card-header">
+        <h2 class="card-title">API performance and policy status</h2>
+      </div>
+      <div class="card-body" style="padding:0;">
+        <div class="table-wrapper">
+          <table class="data-table" id="analyticsTable">
+            <thead>
+              <tr>
+                <th>API</th>
+                <th>Environment</th>
+                <th>Requests</th>
+                <th>Success %</th>
+                <th>P95</th>
+                <th>Policy Hits</th>
+                <th>Consumers</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for api in analytics_rows %}
+              <tr class="analytics-row" data-env="{{ api.environment }}">
+                <td>
+                  <div class="analytics-name">{{ api.api_name }}</div>
+                  <div class="analytics-sub">{{ api.app }}</div>
+                </td>
+                <td>{{ api.environment }}</td>
+                <td>{{ api.requests }}</td>
+                <td>{{ api.success_rate }}%</td>
+                <td>{{ api.p95_latency_ms }} ms</td>
+                <td>{{ api.policy_hits }}</td>
+                <td>{{ api.consumer_count }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="analytics-side-stack">
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">Recommended next additions</h2>
+        </div>
+        <div class="card-body">
+          <ul class="analytics-notes">
+            <li>Consumer app trend by contract and client ID</li>
+            <li>Rate limiting and auth policy breach drill-down</li>
+            <li>Comparison across environments and deployment versions</li>
+            <li>Export to audit and incident correlation views</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">Top policy hotspots</h2>
+        </div>
+        <div class="card-body">
+          <div class="analytics-highlight-list">
+            {% for item in policy_hotspots %}
+            <div class="analytics-highlight">
+              <strong>{{ item.api_name }}</strong>
+              <span>{{ item.policy_hits }} hits · {{ item.environment }}</span>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  .analytics-page {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .analytics-stats-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .analytics-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.85fr) minmax(280px, .9fr);
+    gap: 1rem;
+    align-items: start;
+  }
+
+  .analytics-side-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .analytics-name {
+    font-weight: 700;
+  }
+
+  .analytics-sub {
+    font-size: .82rem;
+    color: var(--text-muted, #6b7280);
+    margin-top: .15rem;
+  }
+
+  .analytics-notes {
+    margin: 0;
+    padding-left: 1rem;
+    display: grid;
+    gap: .45rem;
+    color: var(--text-muted, #6b7280);
+  }
+
+  .analytics-highlight-list {
+    display: grid;
+    gap: .75rem;
+  }
+
+  .analytics-highlight {
+    display: flex;
+    justify-content: space-between;
+    gap: .5rem;
+    font-size: .92rem;
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 12px;
+    padding: .75rem .85rem;
+  }
+
+  .analytics-highlight span {
+    color: var(--text-muted, #6b7280);
+    text-align: right;
+  }
+
+  @media (max-width: 1024px) {
+    .analytics-stats-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .analytics-layout {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .analytics-stats-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .analytics-highlight {
+      flex-direction: column;
+    }
+
+    .analytics-highlight span {
+      text-align: left;
+    }
+  }
+</style>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (function() {
+    const envFilter = document.getElementById('analyticsEnvFilter');
+    const rows = Array.from(document.querySelectorAll('.analytics-row'));
+    const exportBtn = document.getElementById('analyticsExportBtn');
+
+    function applyFilters() {
+      const env = envFilter ? envFilter.value : '';
+      rows.forEach(function(row) {
+        row.hidden = !!env && row.dataset.env !== env;
+      });
+    }
+
+    function exportTable() {
+      const visibleRows = rows.filter(function(row) { return !row.hidden; });
+      const lines = ['api_name,app,environment,requests,success_rate,p95_latency_ms,policy_hits,consumer_count'];
+      visibleRows.forEach(function(row) {
+        const cols = row.querySelectorAll('td');
+        const apiName = cols[0].querySelector('.analytics-name').textContent.trim();
+        const app = cols[0].querySelector('.analytics-sub').textContent.trim();
+        const env = cols[1].textContent.trim();
+        const requests = cols[2].textContent.trim();
+        const success = cols[3].textContent.trim();
+        const p95 = cols[4].textContent.trim();
+        const policyHits = cols[5].textContent.trim();
+        const consumers = cols[6].textContent.trim();
+        lines.push([apiName, app, env, requests, success, p95, policyHits, consumers].join(','));
+      });
+
+      const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = 'mule-api-analytics.csv';
+      link.click();
+    }
+
+    if (envFilter) envFilter.addEventListener('change', applyFilters);
+    if (exportBtn) exportBtn.addEventListener('click', exportTable);
+  })();
+</script>
+{% endblock %}

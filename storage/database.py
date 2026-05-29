@@ -13,6 +13,36 @@ Base = declarative_base()
 settings = get_settings()
 
 
+class TelemetryLog(Base):
+    """SQLAlchemy model for telemetry logs stored independently of incidents."""
+
+    __tablename__ = "telemetry_logs"
+
+    log_id = Column(String(4), primary_key=True, nullable=False)
+    timestamp = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    observed_timestamp = Column(DateTime, nullable=True)
+    app_name = Column(String(255), nullable=False, index=True)
+    environment = Column(String(50), nullable=False, index=True)
+    deployment_type = Column(String(50), nullable=True, index=True)
+    severity = Column(String(20), nullable=False, index=True)
+    severity_number = Column(Integer, nullable=True)
+    message = Column(Text, nullable=False)
+    error_type = Column(String(255), nullable=True, index=True)
+    error_message = Column(Text, nullable=True)
+    trace_id = Column(String(255), nullable=True, index=True)
+    span_id = Column(String(255), nullable=True)
+    flow_name = Column(String(255), nullable=True, index=True)
+    logger_name = Column(String(255), nullable=True)
+    service_name = Column(String(255), nullable=True, index=True)
+    source_scope = Column(String(255), nullable=True)
+    raw_payload = Column(Text, nullable=False)
+    attributes = Column(JSON, nullable=True)
+    incident_created = Column(Boolean, default=False, nullable=False, index=True)
+    incident_id = Column(String(4), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class Incident(Base):
     """SQLAlchemy model for incidents table."""
     __tablename__ = "incidents"
@@ -110,6 +140,24 @@ class Incident(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
+class ProjectIntegrationConfig(Base):
+    """Encrypted per-project integration configuration stored in SQLite."""
+
+    __tablename__ = "project_integration_configs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    project_id = Column(String(64), nullable=False, unique=True, index=True)
+    llm = Column(JSON, nullable=True)
+    jira = Column(JSON, nullable=True)
+    github = Column(JSON, nullable=True)
+    anypoint = Column(JSON, nullable=True)
+    slack = Column(JSON, nullable=True)
+    teams = Column(JSON, nullable=True)
+    runtime = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 def get_engine():
     """Create and return database engine."""
     database_url = f"sqlite:///{settings.database_path}"
@@ -162,4 +210,11 @@ def init_database():
     logger.info(f"Initializing database at {settings.database_path}")
     engine = get_engine()
     Base.metadata.create_all(bind=engine)
+
+    with engine.begin() as connection:
+        columns = [row[1] for row in connection.exec_driver_sql("PRAGMA table_info(project_integration_configs)").fetchall()]
+        if "runtime" not in columns:
+            connection.exec_driver_sql("ALTER TABLE project_integration_configs ADD COLUMN runtime JSON")
+            logger.info("Added runtime column to project_integration_configs")
+
     logger.info("Database initialized successfully")

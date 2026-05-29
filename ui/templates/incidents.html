@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+
+{% block title %}Incidents — Prism{% endblock %}
+{% block topbar_title %}Incidents{% endblock %}
+
+{% block topbar_actions %}
+<a href="/incidents" class="btn btn-ghost btn-sm">↻ Refresh</a>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Incidents</h1>
+    <p class="page-subtitle">{{ incidents|length }} of {{ total }} incidents shown</p>
+  </div>
+</div>
+
+<!-- ── Filter bar ──────────────────────────────────────────────────────── -->
+<form method="get" action="/incidents" class="filter-bar" id="filterForm">
+  <div class="filter-group">
+    <label class="filter-label">Severity</label>
+    <div class="filter-checks">
+      {% for sev in all_severities %}
+      <label class="check-chip check-chip--{{ sev | lower }}">
+        <input type="checkbox" name="severity" value="{{ sev }}"
+               {% if sev in filter_severity %}checked{% endif %}>
+        {{ sev }}
+      </label>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="filter-group">
+    <label class="filter-label">Status</label>
+    <div class="filter-checks">
+      {% for st in all_statuses %}
+      <label class="check-chip">
+        <input type="checkbox" name="status" value="{{ st }}"
+               {% if st in filter_status %}checked{% endif %}>
+        {{ st.replace('_', ' ') }}
+      </label>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="filter-group filter-group--search">
+    <input class="input input-sm" type="text" name="app_name"
+           placeholder="Filter by app name…" value="{{ filter_app }}">
+  </div>
+
+  <div class="filter-actions">
+    <button class="btn btn-primary btn-sm" type="submit">Apply</button>
+    <a class="btn btn-ghost btn-sm" href="/incidents">Clear</a>
+  </div>
+</form>
+
+<!-- ── Incident list ───────────────────────────────────────────────────── -->
+{% if incidents %}
+<div class="incident-list" id="incidentList">
+  {% for inc in incidents %}
+  <a href="/incidents/{{ inc.incident_id }}" class="incident-row" data-id="{{ inc.incident_id }}">
+
+    <div class="incident-row-severity">
+      <span class="badge {{ inc.severity | severity_badge }}">{{ inc.severity or '—' }}</span>
+    </div>
+
+    <div class="incident-row-body">
+      <div class="incident-row-title">{{ inc.error_title or 'Untitled Incident' }}</div>
+      <div class="incident-row-meta">
+        <span class="incident-row-id">{{ inc.incident_id }}</span>
+        <span class="incident-row-sep">·</span>
+        <span class="incident-row-app">{{ inc.app_name }}</span>
+        <span class="incident-row-sep">·</span>
+        <span class="incident-row-time">{{ inc.created_at | fmt_dt }}</span>
+        {% if inc.repo_full_name %}
+        <span class="incident-row-sep">·</span>
+        <span class="incident-row-repo">{{ inc.repo_full_name }}</span>
+        {% endif %}
+        {% if inc.pr_url %}
+        <span class="incident-row-sep">·</span>
+        <a href="{{ inc.pr_url }}" target="_blank" class="incident-row-link" onclick="event.stopPropagation()">PR ↗</a>
+        {% endif %}
+        {% if inc.jira_ticket_url %}
+        <span class="incident-row-sep">·</span>
+        <a href="{{ inc.jira_ticket_url }}" target="_blank" class="incident-row-link" onclick="event.stopPropagation()">Jira ↗</a>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="incident-row-status">
+      <span class="badge {{ inc.status | status_badge }}">{{ (inc.status or 'UNKNOWN').replace('_', ' ') }}</span>
+      {% if inc.approval_status == 'pending' %}
+      <span class="badge badge-warning" style="margin-top:4px;">Needs Review</span>
+      {% endif %}
+    </div>
+
+  </a>
+  {% endfor %}
+</div>
+
+{% else %}
+<div class="empty-state">
+  <div class="empty-state-icon">🔍</div>
+  <div class="empty-state-title">No incidents match your filters</div>
+  <div class="empty-state-desc">Try adjusting or clearing the filters above.</div>
+  <a href="/incidents" class="btn btn-primary" style="margin-top: var(--space-4);">Clear filters</a>
+</div>
+{% endif %}
+
+{% endblock %}

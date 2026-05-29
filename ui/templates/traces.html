@@ -1,0 +1,243 @@
+{% extends "base.html" %}
+
+{% block title %}Mule Traces — Prism{% endblock %}
+{% block topbar_title %}Mule Traces{% endblock %}
+
+{% block topbar_actions %}
+<span class="topbar-status">
+  <span class="status-dot status-dot--online"></span>
+  <span class="status-label">OTel Live</span>
+</span>
+<select class="select-sm" id="traceEnvFilter" title="Environment">
+  <option value="">All environments</option>
+  {% for env in trace_summary.environments %}
+  <option value="{{ env }}">{{ env }}</option>
+  {% endfor %}
+</select>
+<select class="select-sm" id="traceStatusFilter" title="Trace outcome">
+  <option value="">All traces</option>
+  <option value="error">Errors</option>
+  <option value="slow">Slow</option>
+  <option value="healthy">Healthy</option>
+</select>
+<button class="btn btn-ghost btn-sm" id="refreshBtn">↻ Refresh</button>
+{% endblock %}
+
+{% block content %}
+<div class="page-content trace-page">
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Distributed traces for Mule applications</h1>
+      <p class="page-subtitle">Correlate flows, spans, environments, and incidents using OpenTelemetry data.</p>
+    </div>
+  </div>
+
+  <div class="stats-grid trace-stats-grid">
+    <div class="stat-card">
+      <div class="stat-card-label">Trace Volume</div>
+      <div class="stat-card-value">{{ trace_summary.total_traces }}</div>
+      <div class="stat-card-delta">Collected in selected time window</div>
+    </div>
+    <div class="stat-card stat-card--critical">
+      <div class="stat-card-label">Errored Traces</div>
+      <div class="stat-card-value">{{ trace_summary.error_traces }}</div>
+      <div class="stat-card-delta">Flows with failed spans</div>
+    </div>
+    <div class="stat-card stat-card--warning">
+      <div class="stat-card-label">Slow Traces</div>
+      <div class="stat-card-value">{{ trace_summary.slow_traces }}</div>
+      <div class="stat-card-delta">Above latency threshold</div>
+    </div>
+    <div class="stat-card stat-card--success">
+      <div class="stat-card-label">Median Latency</div>
+      <div class="stat-card-value">{{ trace_summary.median_latency_ms }} ms</div>
+      <div class="stat-card-delta">Across Mule spans</div>
+    </div>
+  </div>
+
+  <div class="trace-layout">
+    <div class="card">
+      <div class="card-header">
+        <h2 class="card-title">Trace explorer</h2>
+        <span class="text-muted text-sm">Use this list to jump from latency spikes to incidents.</span>
+      </div>
+      <div class="card-body" style="padding:0;">
+        <div class="table-wrapper">
+          <table class="data-table" id="traceTable">
+            <thead>
+              <tr>
+                <th>Application</th>
+                <th>Flow</th>
+                <th>Environment</th>
+                <th>Status</th>
+                <th>Latency</th>
+                <th>Span Count</th>
+                <th>Correlation ID</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for trace in traces %}
+              <tr class="trace-row" data-env="{{ trace.environment }}" data-status="{{ trace.status }}">
+                <td>
+                  <div class="trace-primary">{{ trace.app }}</div>
+                  <div class="trace-secondary">{{ trace.api_name }}</div>
+                </td>
+                <td>{{ trace.flow }}</td>
+                <td>{{ trace.environment }}</td>
+                <td>
+                  <span class="badge {% if trace.status == 'error' %}badge-error{% elif trace.status == 'slow' %}badge-warning{% else %}badge-success{% endif %}">
+                    {{ trace.status | upper }}
+                  </span>
+                </td>
+                <td>{{ trace.latency_ms }} ms</td>
+                <td>{{ trace.span_count }}</td>
+                <td><code>{{ trace.correlation_id }}</code></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="trace-side-stack">
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">Common failed spans</h2>
+        </div>
+        <div class="card-body">
+          <div class="trace-chip-list">
+            {% for span in failed_spans %}
+            <div class="trace-chip">
+              <div class="trace-chip__name">{{ span.name }}</div>
+              <div class="trace-chip__meta">{{ span.count }} failures · {{ span.system }}</div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">Recommended MuleSoft additions</h2>
+        </div>
+        <div class="card-body">
+          <ul class="trace-notes">
+            <li>Dependency map for HTTP, JMS, DB, Salesforce, SAP and MQ connectors</li>
+            <li>Waterfall view with parent-child span timings</li>
+            <li>Correlation-link from trace to incident, logs and deployment version</li>
+            <li>Trace search by API, flow, environment, worker and correlation ID</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  .trace-page {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .trace-stats-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .trace-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.7fr) minmax(300px, .9fr);
+    gap: 1rem;
+    align-items: start;
+  }
+
+  .trace-side-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .trace-primary {
+    font-weight: 700;
+    color: var(--text-primary, #111827);
+  }
+
+  .trace-secondary {
+    font-size: .82rem;
+    color: var(--text-muted, #6b7280);
+    margin-top: .15rem;
+  }
+
+  .trace-chip-list {
+    display: flex;
+    flex-direction: column;
+    gap: .75rem;
+  }
+
+  .trace-chip {
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 14px;
+    padding: .85rem .95rem;
+    background: var(--bg-secondary, #fff);
+  }
+
+  .trace-chip__name {
+    font-weight: 700;
+    margin-bottom: .2rem;
+  }
+
+  .trace-chip__meta,
+  .trace-notes {
+    color: var(--text-muted, #6b7280);
+    font-size: .9rem;
+  }
+
+  .trace-notes {
+    margin: 0;
+    padding-left: 1rem;
+    display: grid;
+    gap: .45rem;
+  }
+
+  @media (max-width: 1024px) {
+    .trace-stats-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .trace-layout {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .trace-stats-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (function() {
+    const envFilter = document.getElementById('traceEnvFilter');
+    const statusFilter = document.getElementById('traceStatusFilter');
+    const rows = Array.from(document.querySelectorAll('.trace-row'));
+
+    function applyFilters() {
+      const env = envFilter ? envFilter.value : '';
+      const status = statusFilter ? statusFilter.value : '';
+      rows.forEach(function(row) {
+        const matchesEnv = !env || row.dataset.env === env;
+        const matchesStatus = !status || row.dataset.status === status;
+        row.hidden = !(matchesEnv && matchesStatus);
+      });
+    }
+
+    if (envFilter) envFilter.addEventListener('change', applyFilters);
+    if (statusFilter) statusFilter.addEventListener('change', applyFilters);
+  })();
+</script>
+{% endblock %}

@@ -1,0 +1,397 @@
+{% extends "base.html" %}
+
+{% block title %}API Analytics — Prism{% endblock %}
+{% block topbar_title %}API Analytics{% endblock %}
+
+{% block topbar_actions %}
+<span class="topbar-status" id="apiStatus">
+  <span class="status-dot status-dot--online"></span>
+  <span class="status-label">Live</span>
+</span>
+<select class="select-sm" id="envSelect" title="Environment">
+  <option value="production">Production</option>
+  <option value="staging">Staging</option>
+  <option value="dev">Development</option>
+</select>
+<select class="select-sm" id="timeRangeSelect" title="Time range">
+  <option value="1h">Last 1 hour</option>
+  <option value="6h">Last 6 hours</option>
+  <option value="24h" selected>Last 24 hours</option>
+  <option value="7d">Last 7 days</option>
+</select>
+<button class="btn btn-ghost btn-sm" id="refreshBtn">↻ Refresh</button>
+{% endblock %}
+
+{% block content %}
+<div class="page-content">
+
+  <!-- ── KPI Row ── -->
+  <div class="kpi-row" id="kpiRow">
+    <div class="kpi-card">
+      <div class="kpi-label">Total Requests</div>
+      <div class="kpi-value" id="kpiRequests">—</div>
+      <div class="kpi-delta kpi-delta--up" id="kpiRequestsDelta"></div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Avg Latency (ms)</div>
+      <div class="kpi-value" id="kpiLatency">—</div>
+      <div class="kpi-delta" id="kpiLatencyDelta"></div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Error Rate</div>
+      <div class="kpi-value" id="kpiErrorRate">—</div>
+      <div class="kpi-delta kpi-delta--down" id="kpiErrorDelta"></div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Active APIs</div>
+      <div class="kpi-value" id="kpiActiveApis">—</div>
+      <div class="kpi-delta" id="kpiApisDelta"></div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">P99 Latency (ms)</div>
+      <div class="kpi-value" id="kpiP99">—</div>
+      <div class="kpi-delta" id="kpiP99Delta"></div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Policy Violations</div>
+      <div class="kpi-value" id="kpiViolations">—</div>
+      <div class="kpi-delta kpi-delta--down" id="kpiViolationsDelta"></div>
+    </div>
+  </div>
+
+  <!-- ── Charts Row ── -->
+  <div class="charts-row">
+    <!-- Request Volume -->
+    <div class="chart-card chart-card--wide">
+      <div class="chart-header">
+        <h3 class="chart-title">Request Volume</h3>
+        <div class="chart-legend">
+          <span class="legend-dot" style="background:var(--accent)"></span>Requests
+          <span class="legend-dot" style="background:var(--danger)"></span>Errors
+        </div>
+      </div>
+      <div class="chart-body">
+        <canvas id="requestVolumeChart" height="120"></canvas>
+      </div>
+    </div>
+
+    <!-- Latency Percentiles -->
+    <div class="chart-card">
+      <div class="chart-header">
+        <h3 class="chart-title">Latency Percentiles</h3>
+      </div>
+      <div class="chart-body">
+        <canvas id="latencyChart" height="160"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── API Table ── -->
+  <div class="section-card">
+    <div class="section-header">
+      <h3 class="section-title">Managed APIs</h3>
+      <div class="section-actions">
+        <input type="search" class="input-search" id="apiSearch" placeholder="Filter APIs…" />
+        <button class="btn btn-ghost btn-sm" id="exportApis">↓ Export</button>
+      </div>
+    </div>
+    <div class="table-wrapper">
+      <table class="data-table" id="apisTable">
+        <thead>
+          <tr>
+            <th>API Name</th>
+            <th>Version</th>
+            <th>Status</th>
+            <th>Requests (24h)</th>
+            <th>Errors (24h)</th>
+            <th>Avg Latency</th>
+            <th>Policies</th>
+            <th class="col-actions">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="apisTableBody">
+          <tr class="table-loading">
+            <td colspan="8">
+              <div class="loading-spinner"></div> Loading APIs…
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── OTel Metrics ── -->
+  <div class="section-card" id="otelSection">
+    <div class="section-header">
+      <h3 class="section-title">OpenTelemetry Metrics</h3>
+      <span class="badge badge--info">Live</span>
+    </div>
+    <div class="otel-grid" id="otelGrid">
+      <!-- populated by JS -->
+      <div class="otel-metric-card placeholder">
+        <div class="loading-spinner"></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  "use strict";
+
+  /* ── helpers ─────────────────────────────────────── */
+  const $ = id => document.getElementById(id);
+  const fmt = n => n == null ? "—" : Number(n).toLocaleString();
+  const pct = n => n == null ? "—" : Number(n).toFixed(2) + "%";
+  const ms  = n => n == null ? "—" : Number(n).toFixed(1) + " ms";
+
+  /* ── Chart.js mini-wrapper ─────────────────────────
+     We draw charts using the Canvas API directly (no CDN dep).        */
+  function drawLineChart(canvas, labels, datasets) {
+    const ctx = canvas.getContext("2d");
+    const W = canvas.width = canvas.offsetWidth;
+    const H = canvas.height = canvas.offsetHeight || 120;
+    ctx.clearRect(0, 0, W, H);
+
+    const pad = { top: 12, right: 16, bottom: 28, left: 48 };
+    const cw = W - pad.left - pad.right;
+    const ch = H - pad.top - pad.bottom;
+
+    const allVals = datasets.flatMap(d => d.data);
+    const maxVal  = Math.max(...allVals, 1);
+    const minVal  = 0;
+
+    const xStep = labels.length > 1 ? cw / (labels.length - 1) : cw;
+
+    // grid
+    ctx.strokeStyle = "rgba(255,255,255,0.06)";
+    ctx.lineWidth   = 1;
+    for (let i = 0; i <= 4; i++) {
+      const y = pad.top + (ch / 4) * i;
+      ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(pad.left + cw, y);
+      ctx.stroke();
+      ctx.fillStyle  = "rgba(255,255,255,0.35)";
+      ctx.font       = "10px system-ui";
+      ctx.textAlign  = "right";
+      const val = maxVal - (maxVal / 4) * i;
+      ctx.fillText(val >= 1000 ? (val/1000).toFixed(1)+"k" : val.toFixed(0), pad.left - 4, y + 4);
+    }
+
+    // x-axis labels
+    ctx.fillStyle = "rgba(255,255,255,0.35)";
+    ctx.font      = "10px system-ui";
+    ctx.textAlign = "center";
+    const step = Math.max(1, Math.floor(labels.length / 6));
+    labels.forEach((lbl, i) => {
+      if (i % step !== 0 && i !== labels.length - 1) return;
+      const x = pad.left + i * xStep;
+      ctx.fillText(lbl, x, H - 4);
+    });
+
+    // lines
+    datasets.forEach(ds => {
+      ctx.strokeStyle = ds.color || "#6366f1";
+      ctx.lineWidth   = 2;
+      ctx.beginPath();
+      ds.data.forEach((v, i) => {
+        const x = pad.left + i * xStep;
+        const y = pad.top + ch - ((v - minVal) / (maxVal - minVal)) * ch;
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+
+      // fill
+      ctx.globalAlpha = 0.08;
+      ctx.fillStyle   = ds.color || "#6366f1";
+      ctx.beginPath();
+      ds.data.forEach((v, i) => {
+        const x = pad.left + i * xStep;
+        const y = pad.top + ch - ((v - minVal) / (maxVal - minVal)) * ch;
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      });
+      ctx.lineTo(pad.left + (ds.data.length - 1) * xStep, pad.top + ch);
+      ctx.lineTo(pad.left, pad.top + ch);
+      ctx.closePath(); ctx.fill();
+      ctx.globalAlpha = 1;
+    });
+  }
+
+  function drawBarChart(canvas, labels, data, color) {
+    const ctx = canvas.getContext("2d");
+    const W   = canvas.width  = canvas.offsetWidth;
+    const H   = canvas.height = canvas.offsetHeight || 160;
+    ctx.clearRect(0, 0, W, H);
+
+    const pad   = { top: 12, right: 16, bottom: 28, left: 48 };
+    const cw    = W - pad.left - pad.right;
+    const ch    = H - pad.top  - pad.bottom;
+    const maxV  = Math.max(...data, 1);
+    const barW  = cw / labels.length * 0.6;
+    const gap   = cw / labels.length;
+
+    ctx.strokeStyle = "rgba(255,255,255,0.06)";
+    for (let i = 0; i <= 4; i++) {
+      const y = pad.top + (ch / 4) * i;
+      ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(pad.left + cw, y); ctx.stroke();
+      ctx.fillStyle = "rgba(255,255,255,0.35)"; ctx.font = "10px system-ui"; ctx.textAlign = "right";
+      ctx.fillText(((maxV - maxV/4*i)/1).toFixed(0), pad.left - 4, y + 4);
+    }
+
+    data.forEach((v, i) => {
+      const x  = pad.left + gap * i + (gap - barW) / 2;
+      const bh = (v / maxV) * ch;
+      const y  = pad.top + ch - bh;
+      ctx.fillStyle = color || "#6366f1";
+      ctx.globalAlpha = 0.85;
+      ctx.beginPath();
+      ctx.roundRect ? ctx.roundRect(x, y, barW, bh, 3) : ctx.rect(x, y, barW, bh);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+
+      ctx.fillStyle = "rgba(255,255,255,0.35)"; ctx.font = "10px system-ui"; ctx.textAlign = "center";
+      ctx.fillText(labels[i], x + barW / 2, H - 4);
+    });
+  }
+
+  /* ── Mock / live data ──────────────────────────────── */
+  function buildMockTimeSeries(points, base, noise) {
+    return Array.from({ length: points }, () => Math.max(0, base + (Math.random() - 0.5) * noise));
+  }
+
+  function loadKpis() {
+    // In production these would come from /api/observability/metrics
+    $("kpiRequests").textContent     = fmt(148320);
+    $("kpiRequestsDelta").textContent = "+12.4%";
+    $("kpiLatency").textContent      = ms(87);
+    $("kpiLatencyDelta").textContent  = "-5ms";
+    $("kpiErrorRate").textContent    = pct(0.43);
+    $("kpiErrorDelta").textContent    = "-0.12%";
+    $("kpiActiveApis").textContent   = "24";
+    $("kpiApisDelta").textContent     = "+3";
+    $("kpiP99").textContent          = ms(312);
+    $("kpiP99Delta").textContent      = "+8ms";
+    $("kpiViolations").textContent   = "7";
+    $("kpiViolationsDelta").textContent = "-2";
+  }
+
+  function loadCharts() {
+    const points = 24;
+    const labels = Array.from({ length: points }, (_, i) => `${String(23-i).padStart(2,"0")}:00`).reverse();
+
+    const rvCanvas = $("requestVolumeChart");
+    if (rvCanvas) drawLineChart(rvCanvas, labels, [
+      { data: buildMockTimeSeries(points, 6000, 2000), color: "#6366f1" },
+      { data: buildMockTimeSeries(points, 120,  80),   color: "#ef4444" },
+    ]);
+
+    const latCanvas = $("latencyChart");
+    if (latCanvas) drawBarChart(latCanvas,
+      ["p50", "p75", "p90", "p95", "p99"],
+      [45, 72, 110, 180, 312],
+      "#10b981"
+    );
+  }
+
+  function loadApisTable() {
+    const apis = [
+      { name: "Order Processing API",  version: "v2.1", status: "running", req: 42100, err: 89,  lat: 64,  pol: 4 },
+      { name: "Customer Profile API",  version: "v1.4", status: "running", req: 31200, err: 12,  lat: 38,  pol: 3 },
+      { name: "Payment Gateway API",   version: "v3.0", status: "running", req: 28900, err: 210, lat: 142, pol: 6 },
+      { name: "Inventory Service API", version: "v2.0", status: "degraded", req: 18400, err: 780, lat: 231, pol: 2 },
+      { name: "Notification API",      version: "v1.0", status: "running",  req: 15200, err: 44,  lat: 22,  pol: 1 },
+      { name: "Auth Service API",      version: "v4.2", status: "running",  req: 12600, err: 5,   lat: 18,  pol: 5 },
+    ];
+
+    const tbody = $("apisTableBody");
+    if (!tbody) return;
+
+    tbody.innerHTML = apis.map(a => {
+      const statusCls = a.status === "running" ? "badge--success"
+                      : a.status === "degraded" ? "badge--warning" : "badge--danger";
+      const errCls    = a.err > 500 ? "text-danger" : a.err > 100 ? "text-warning" : "";
+      return `<tr>
+        <td><strong>${a.name}</strong></td>
+        <td><span class="mono">${a.version}</span></td>
+        <td><span class="badge ${statusCls}">${a.status}</span></td>
+        <td>${fmt(a.req)}</td>
+        <td class="${errCls}">${fmt(a.err)}</td>
+        <td>${ms(a.lat)}</td>
+        <td><span class="badge badge--info">${a.pol} active</span></td>
+        <td class="col-actions">
+          <button class="btn btn-xs btn-ghost" title="View analytics">📊</button>
+          <button class="btn btn-xs btn-ghost" title="View policies">🔒</button>
+        </td>
+      </tr>`;
+    }).join("");
+  }
+
+  function loadOtelMetrics() {
+    const metrics = [
+      { name: "http.server.request.duration", value: "87.3 ms",  unit: "histogram", trend: "stable" },
+      { name: "http.server.active_requests",  value: "142",       unit: "gauge",     trend: "up"     },
+      { name: "process.cpu.usage",            value: "34.2%",     unit: "gauge",     trend: "stable" },
+      { name: "process.memory.usage",         value: "1.2 GB",    unit: "gauge",     trend: "up"     },
+      { name: "db.client.connections.usage",  value: "28 / 100",  unit: "gauge",     trend: "stable" },
+      { name: "messaging.publish.duration",   value: "12.1 ms",   unit: "histogram", trend: "down"   },
+    ];
+
+    const grid = $("otelGrid");
+    if (!grid) return;
+    grid.innerHTML = metrics.map(m => {
+      const trendIcon = m.trend === "up" ? "↑" : m.trend === "down" ? "↓" : "→";
+      const trendCls  = m.trend === "up" ? "text-warning" : m.trend === "down" ? "text-success" : "text-muted";
+      return `<div class="otel-metric-card">
+        <div class="otel-metric-name" title="${m.name}">${m.name}</div>
+        <div class="otel-metric-value">${m.value}</div>
+        <div class="otel-metric-meta">
+          <span class="badge badge--neutral">${m.unit}</span>
+          <span class="${trendCls}">${trendIcon} ${m.trend}</span>
+        </div>
+      </div>`;
+    }).join("");
+  }
+
+  /* ── Search filter ──────────────────────────────────── */
+  function initSearch() {
+    const input = $("apiSearch");
+    if (!input) return;
+    input.addEventListener("input", () => {
+      const q = input.value.toLowerCase();
+      document.querySelectorAll("#apisTableBody tr").forEach(row => {
+        row.style.display = row.textContent.toLowerCase().includes(q) ? "" : "none";
+      });
+    });
+  }
+
+  /* ── Refresh / polling ──────────────────────────────── */
+  function init() {
+    loadKpis();
+    loadApisTable();
+    loadOtelMetrics();
+    setTimeout(loadCharts, 50); // after layout paint
+
+    const rbtn = $("refreshBtn");
+    if (rbtn) rbtn.addEventListener("click", () => {
+      loadKpis();
+      loadCharts();
+      loadApisTable();
+      loadOtelMetrics();
+    });
+
+    $("timeRangeSelect") && $("timeRangeSelect").addEventListener("change", () => {
+      loadKpis(); loadCharts();
+    });
+
+    initSearch();
+    window.addEventListener("resize", () => loadCharts());
+  }
+
+  document.readyState === "loading"
+    ? document.addEventListener("DOMContentLoaded", init)
+    : init();
+})();
+</script>
+{% endblock %}

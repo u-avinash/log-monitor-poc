@@ -1,6 +1,6 @@
 """Pydantic models for data validation and serialization."""
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
 
@@ -40,6 +40,58 @@ class IncidentCreate(BaseModel):
     severity: Optional[str] = None  # Allow OTLP parser to pass calculated severity
     metadata: Optional[dict] = None  # OTLP custom attributes and telemetry data
     timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+
+class TelemetryLogCreate(BaseModel):
+    """Model for persisting a telemetry log independently of incident creation."""
+    app_name: str
+    environment: str
+    message: str
+    severity: str
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    observed_timestamp: Optional[datetime] = None
+    deployment_type: Optional[str] = None
+    severity_number: Optional[int] = None
+    error_type: Optional[str] = None
+    error_message: Optional[str] = None
+    trace_id: Optional[str] = None
+    span_id: Optional[str] = None
+    flow_name: Optional[str] = None
+    logger_name: Optional[str] = None
+    service_name: Optional[str] = None
+    source_scope: Optional[str] = None
+    raw_payload: str
+    attributes: Dict[str, Any] = Field(default_factory=dict)
+
+
+class TelemetryLogResponse(BaseModel):
+    """Model for telemetry log API responses."""
+    log_id: str
+    app_name: str
+    environment: str
+    message: str
+    severity: str
+    timestamp: datetime
+    observed_timestamp: Optional[datetime] = None
+    deployment_type: Optional[str] = None
+    severity_number: Optional[int] = None
+    error_type: Optional[str] = None
+    error_message: Optional[str] = None
+    trace_id: Optional[str] = None
+    span_id: Optional[str] = None
+    flow_name: Optional[str] = None
+    logger_name: Optional[str] = None
+    service_name: Optional[str] = None
+    source_scope: Optional[str] = None
+    raw_payload: Optional[str] = None
+    attributes: Dict[str, Any] = Field(default_factory=dict)
+    incident_created: bool = False
+    incident_id: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
 
 
 class IncidentResponse(BaseModel):
