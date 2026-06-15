@@ -30,7 +30,44 @@ def finalize_node(state: AgentState) -> AgentState:
     try:
         # Determine final status
         approval_status = state.get('approval_status', 'pending')
-        
+        error_message = state.get('error_message')
+
+        # If a workflow step failed (error_message set) and the incident was not
+        # explicitly approved or rejected, mark it FAILED and stop here.
+        if error_message and approval_status not in ('approved', 'rejected'):
+            final_status = 'FAILED'
+            status_msg = f"❌ Workflow stopped due to step failure: {error_message}"
+            logger.error(
+                "[Finalizer] Incident %s marked FAILED — %s",
+                state['incident_id'], error_message,
+            )
+
+            completed_steps = list(state.get('workflow_completed_steps') or [])
+            state['workflow_completed_steps'] = completed_steps
+            state['workflow_progress_pct'] = min(len(completed_steps) / 11.0, 1.0)
+
+            with get_session() as session:
+                repo = IncidentRepository(session)
+                repo.update(
+                    incident_id=state['incident_id'],
+                    status=final_status,
+                    current_workflow_node='failed',
+                    workflow_completed_steps=completed_steps,
+                    workflow_progress_pct=state['workflow_progress_pct'],
+                    rca_text=state.get('rca_text'),
+                    updated_at=datetime.utcnow(),
+                )
+
+            state['current_node'] = 'failed'
+            state['completed_at'] = datetime.utcnow().isoformat()
+            state['updated_at'] = state['completed_at']
+            state['messages'] = state.get('messages', []) + [
+                status_msg,
+                f"✓ Incident status set to FAILED at {state['completed_at']}",
+            ]
+            logger.info("[Finalizer] Incident %s finalized with status: FAILED", state['incident_id'])
+            return state
+
         if approval_status == 'approved':
             # Set terminal status based on what was actually accomplished
             if state.get('pr_url'):

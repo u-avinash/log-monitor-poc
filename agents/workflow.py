@@ -1,5 +1,6 @@
 """LangGraph workflow orchestration for incident processing."""
 import logging
+import time
 from typing import Literal, Optional, cast
 from datetime import datetime
 from langgraph.graph import StateGraph, END
@@ -28,6 +29,97 @@ from agents.nodes.pr_creator import create_pr_node
 from storage.models import Severity
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Retry wrapper for workflow nodes
+# ---------------------------------------------------------------------------
+
+def _make_retryable_node(node_fn, node_name: str, max_retries: int = 2, retry_delay_seconds: float = 5.0):
+    """
+    Wrap a workflow node function with retry-on-error logic.
+
+    If the node sets ``error_message`` in the returned state the call is
+    retried up to ``max_retries`` additional times with ``retry_delay_seconds``
+    sleep between attempts.  The DB is updated to show a "retrying" banner so
+    the UI reflects that the step is being re-attempted.
+
+    After all retries are exhausted the state is returned with
+    ``error_message`` still set so that the downstream conditional edge can
+    route the workflow to ``finalize`` instead of the next step.
+    """
+    def wrapped(state: AgentState) -> AgentState:
+        total_attempts = max_retries + 1
+
+        for attempt in range(1, total_attempts + 1):
+            # On a retry, clear the previous error so the node starts fresh.
+            if attempt > 1:
+                state["error_message"] = None
+                logger.info(
+                    "[Workflow Retry] %s — attempt %d/%d for incident %s",
+                    node_name, attempt, total_attempts, state.get("incident_id"),
+                )
+                # Surface the retry in the UI via a DB update.
+                try:
+                    from storage.database import get_session
+                    from storage.incident_repository import IncidentRepository
+
+                    with get_session() as session:
+                        repo = IncidentRepository(session)
+                        repo.update(
+                            incident_id=state["incident_id"],
+                            current_workflow_node=f"{node_name}_retry_{attempt}",
+                        )
+                except Exception:
+                    pass
+
+            result_state = node_fn(state)
+
+            if not result_state.get("error_message"):
+                # Step succeeded.
+                return result_state
+
+            # Step failed.
+            if attempt < total_attempts:
+                logger.warning(
+                    "[Workflow Retry] %s failed (attempt %d/%d) for incident %s: %s — "
+                    "retrying in %.0fs ...",
+                    node_name, attempt, total_attempts,
+                    state.get("incident_id"),
+                    result_state.get("error_message"),
+                    retry_delay_seconds,
+                )
+                # Persist a "retrying" marker so the UI can display it.
+                try:
+                    from storage.database import get_session
+                    from storage.incident_repository import IncidentRepository
+
+                    with get_session() as session:
+                        repo = IncidentRepository(session)
+                        repo.update(
+                            incident_id=result_state["incident_id"],
+                            current_workflow_node=f"{node_name}_retrying",
+                        )
+                except Exception:
+                    pass
+
+                time.sleep(retry_delay_seconds)
+                state = result_state  # carry forward the latest state on the next attempt
+            else:
+                logger.error(
+                    "[Workflow Retry] %s exhausted all %d attempt(s) for incident %s: %s — "
+                    "workflow will stop at this step.",
+                    node_name, total_attempts,
+                    state.get("incident_id"),
+                    result_state.get("error_message"),
+                )
+                return result_state  # error_message still set → conditional edge routes to finalize
+
+        return result_state  # unreachable, but satisfies type-checkers
+
+    wrapped.__name__ = node_fn.__name__
+    wrapped.__qualname__ = getattr(node_fn, "__qualname__", node_fn.__name__)
+    return wrapped
 
 
 def _normalize_project_token(value: Optional[str]) -> str:
@@ -684,32 +776,53 @@ def create_agent_workflow() -> StateGraph:
     Create the LangGraph workflow for incident processing.
 
     Workflow:
-    1. assess_severity    → Determine if auto-fix needed
-    2. generate_rca       → Create Root Cause Analysis
-    3. generate_fix       → Generate code fix
-    4. generate_pdf       → Generate RCA PDF report
-    5. reflect            → Quality assessment
-    6. generate_patch_file → Generate .patch file (available for testing BEFORE approval)
-    7. await_approval     → Human review (workflow pauses here; patch already available)
-    8. send_notifications → Slack/Teams alerts
-    9. create_jira_pr     → Create Jira ticket and GitHub PR
-    10. finalize          → Update database and complete
+    1. assess_severity     → Determine if auto-fix needed
+    2. generate_rca        → Create Root Cause Analysis      [retryable, stops on failure]
+    3. generate_fix        → Generate code fix               [retryable, stops on failure]
+    4. generate_pdf        → Generate RCA PDF report         [retryable, stops on failure]
+    5. reflect             → Quality assessment              (uses safe defaults on failure)
+    6. generate_patch_file → Generate .patch file            [retryable, stops on failure]
+    7. await_approval      → Human review (workflow pauses here; patch already available)
+    8. send_notifications  → Slack/Teams alerts
+    9. create_jira_pr      → Create Jira ticket and GitHub PR
+    10. finalize           → Update database and complete
 
     After human approval, run_post_approval_workflow() continues from step 8.
     Patch generation is skipped in run_post_approval_workflow() when the patch
     was already created in step 6.
+
+    Failure handling:
+    - Steps 2-4 and 6 are wrapped with _make_retryable_node() which retries up to
+      2 times (with a 5-second delay) before giving up.
+    - If all retries are exhausted the node sets ``error_message`` in state and
+      conditional routing diverts the workflow directly to ``finalize`` so that
+      no further steps are executed on bad data.
+    - The ``finalize`` node detects ``error_message`` and persists status=FAILED.
 
     Returns:
         Compiled LangGraph workflow
     """
     workflow = StateGraph(AgentState)
 
+    # Register nodes — LLM-calling nodes are wrapped with retry-on-error logic.
     workflow.add_node("assess_severity", assess_severity_node)
-    workflow.add_node("generate_rca", generate_rca_node)
-    workflow.add_node("generate_fix", generate_fix_node)
-    workflow.add_node("generate_pdf", generate_pdf_report)
-    workflow.add_node("reflect", reflect_on_fix_node)
-    workflow.add_node("generate_patch_file", generate_patch_file_node)
+    workflow.add_node(
+        "generate_rca",
+        _make_retryable_node(generate_rca_node, "generate_rca", max_retries=2, retry_delay_seconds=5.0),
+    )
+    workflow.add_node(
+        "generate_fix",
+        _make_retryable_node(generate_fix_node, "generate_fix", max_retries=2, retry_delay_seconds=5.0),
+    )
+    workflow.add_node(
+        "generate_pdf",
+        _make_retryable_node(generate_pdf_report, "generate_pdf", max_retries=1, retry_delay_seconds=5.0),
+    )
+    workflow.add_node("reflect", reflect_on_fix_node)  # uses safe defaults on failure — no retry needed
+    workflow.add_node(
+        "generate_patch_file",
+        _make_retryable_node(generate_patch_file_node, "generate_patch_file", max_retries=1, retry_delay_seconds=3.0),
+    )
     workflow.add_node("await_approval", await_approval_node)
     workflow.add_node("send_notifications", send_notifications_node)
     workflow.add_node("create_jira_pr", create_jira_and_pr_node)
@@ -717,6 +830,7 @@ def create_agent_workflow() -> StateGraph:
 
     workflow.set_entry_point("assess_severity")
 
+    # --- assess_severity → generate_rca / finalize ---
     def should_generate_rca(state: AgentState) -> Literal["generate_rca", "finalize"]:
         severity = state.get("severity", "LOW")
         is_duplicate = state.get("is_duplicate", False)
@@ -735,12 +849,74 @@ def create_agent_workflow() -> StateGraph:
         {"generate_rca": "generate_rca", "finalize": "finalize"},
     )
 
-    workflow.add_edge("generate_rca", "generate_fix")
-    workflow.add_edge("generate_fix", "generate_pdf")
-    workflow.add_edge("generate_pdf", "reflect")
-    workflow.add_edge("reflect", "generate_patch_file")
-    workflow.add_edge("generate_patch_file", "await_approval")
+    # --- generate_rca → generate_fix  (stop on failure) ---
+    def route_after_rca(state: AgentState) -> Literal["generate_fix", "finalize"]:
+        if state.get("error_message"):
+            logger.error(
+                "[Workflow] RCA failed after retries for incident %s — stopping workflow: %s",
+                state.get("incident_id"), state.get("error_message"),
+            )
+            return "finalize"
+        return "generate_fix"
 
+    workflow.add_conditional_edges(
+        "generate_rca",
+        route_after_rca,
+        {"generate_fix": "generate_fix", "finalize": "finalize"},
+    )
+
+    # --- generate_fix → generate_pdf  (stop on failure) ---
+    def route_after_fix(state: AgentState) -> Literal["generate_pdf", "finalize"]:
+        if state.get("error_message"):
+            logger.error(
+                "[Workflow] Fix generation failed after retries for incident %s — stopping workflow: %s",
+                state.get("incident_id"), state.get("error_message"),
+            )
+            return "finalize"
+        return "generate_pdf"
+
+    workflow.add_conditional_edges(
+        "generate_fix",
+        route_after_fix,
+        {"generate_pdf": "generate_pdf", "finalize": "finalize"},
+    )
+
+    # --- generate_pdf → reflect  (stop on failure) ---
+    def route_after_pdf(state: AgentState) -> Literal["reflect", "finalize"]:
+        if state.get("error_message"):
+            logger.error(
+                "[Workflow] PDF generation failed after retries for incident %s — stopping workflow: %s",
+                state.get("incident_id"), state.get("error_message"),
+            )
+            return "finalize"
+        return "reflect"
+
+    workflow.add_conditional_edges(
+        "generate_pdf",
+        route_after_pdf,
+        {"reflect": "reflect", "finalize": "finalize"},
+    )
+
+    # --- reflect → generate_patch_file  (reflect never truly fails — uses defaults) ---
+    workflow.add_edge("reflect", "generate_patch_file")
+
+    # --- generate_patch_file → await_approval  (stop on failure) ---
+    def route_after_patch(state: AgentState) -> Literal["await_approval", "finalize"]:
+        if state.get("error_message"):
+            logger.error(
+                "[Workflow] Patch generation failed after retries for incident %s — stopping workflow: %s",
+                state.get("incident_id"), state.get("error_message"),
+            )
+            return "finalize"
+        return "await_approval"
+
+    workflow.add_conditional_edges(
+        "generate_patch_file",
+        route_after_patch,
+        {"await_approval": "await_approval", "finalize": "finalize"},
+    )
+
+    # --- await_approval → send_notifications / finalize ---
     def should_continue_after_approval(
         state: AgentState,
     ) -> Literal["send_notifications", "finalize"]:

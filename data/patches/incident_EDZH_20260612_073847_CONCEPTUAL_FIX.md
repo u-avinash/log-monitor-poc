@@ -1,0 +1,136 @@
+# Conceptual Fix Guide: EDZH
+
+## ⚠️ Important Notice
+This is a **conceptual fix** generated without direct access to the repository code.
+**Manual review and adaptation required** before implementation.
+
+---
+
+## Incident Information
+
+- **Incident ID:** EDZH
+- **Application:** order-processing-service
+- **Environment:** production
+- **Severity:** HIGH
+- **Repository:** avinash-ai-langchain
+- **File Path:** src/main/mule/order-processing-flows.xml
+- **Error Line:** 127
+- **Generated:** 2026-06-12T07:38:47.351775
+
+---
+
+## Error Details
+
+### Error Title
+UnknownException: "You called the function 'Value Selector' with these arguments: 
+  1: String ("authorize-payment" as
+
+### Error Description
+"You called the function 'Value Selector' with these arguments: 
+  1: String ("authorize-payment" as String {encoding: "UTF-8", mediaType: "application/jav...)
+  2: Name ("discount")
+
+But it expects one of these combinations:
+  (Array, Name)
+  (Array, String)
+  (Date, Name)
+  (DateTime, Name)
+  (LocalDateTime, Name)
+  (LocalTime, Name)
+  (Object, Name)
+  (Object, String)
+  (Period, Name)
+  (Time, Name)
+Trace:
+  at main (Unknown)" evaluating expression: "%dw 2.0
+output application/json
+---
+payload ++ {
+  // Bug: basePrice is 0, causing division by zero error
+  discountPercentage: (payload.discount default 0) / payload.basePrice * 100,
+  finalAmount: (payload.basePrice default 0) - (payload.discount default 0)
+}".
+
+CloudHub Application: order-processing-service
+
+### Stack Trace
+```
+
+```
+
+---
+
+## Root Cause Analysis
+**Summary**
+The order-processing-service application in the production environment encountered an UnknownException due to a mismatch in the expected arguments for the 'Value Selector' function. The immediate impact is that the application is unable to process orders, resulting in failed transactions and potential revenue loss. The error occurs during the evaluation of a DataWeave expression, which is used to calculate the discount percentage and final amount.
+
+**Root Cause**
+The root cause of this error is the incorrect usage of the 'Value Selector' function in the DataWeave expression. The function expects an Array or Object as the first argument, but a String is being passed instead. Specifically, the expression `(payload.discount default 0) / payload.basePrice * 100` is attempting to divide a String by a Number, which is causing the error. Furthermore, the `basePrice` is 0, which would cause a division by zero error even if the types were correct. The DataWeave expression is trying ...
+
+---
+
+## Proposed Fix
+
+The provided fix resolves the issue by adjusting the arguments passed to the Value Selector function to match the expected types. By reviewing the DataWeave expression and modifying the incorrect arguments, we can ensure that the function is called with the correct input types, resolving the UnknownException error. This fix pattern can be applied to similar errors where the input types do not match the expected combinations.
+
+---
+
+## Code Template
+
+```None
+<!-- Example DataWeave expression with corrected Value Selector function -->
+<dw:transform-message doc:name="Transform Message">
+    <dw:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+payload ++ {
+    discountPercentage: (payload.discount default 0) / (payload.basePrice default 1) * 100,
+    finalAmount: (payload.basePrice default 0) - (payload.discount default 0)
+}]]></dw:set-payload>
+</dw:transform-message>
+```
+
+---
+
+## Implementation Steps
+
+1. **Review the error** - Understand the root cause from the RCA above
+2. **Locate the file** - Navigate to `src/main/mule/order-processing-flows.xml`
+3. **Identify the issue** - Find the code causing the error around line 127
+4. **Apply the template** - Use the code template above as guidance
+5. **Adapt to context** - Modify the fix to match your actual code structure
+6. **Test thoroughly** - Verify the fix resolves the issue
+7. **Review changes** - Have another developer review before deploying
+
+---
+
+## Safety Considerations
+
+- ⚠️ **Manual Review Required**: This fix was generated without seeing the actual code
+- 🔍 **Context Awareness**: Ensure the fix fits your specific code context
+- ✅ **Testing**: Thoroughly test in a non-production environment first
+- 👥 **Peer Review**: Have another developer review the changes
+- 📝 **Documentation**: Update comments and documentation as needed
+
+---
+
+## Next Steps
+
+1. Apply the conceptual fix to your codebase following the guidance above
+2. Test the fix thoroughly in a development environment
+3. Create a pull request with proper review process
+4. Monitor the application after deployment
+
+---
+
+## Need Help?
+
+If you need assistance implementing this fix:
+- Review the full error logs and stack trace
+- Consult with your team's subject matter experts
+- Consider pair programming for complex changes
+- Reference the RCA for understanding the root cause
+
+---
+
+Generated by Prism AI - Conceptual Fix Generator
