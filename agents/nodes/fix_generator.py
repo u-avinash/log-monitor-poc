@@ -52,18 +52,18 @@ def generate_fix_node(state: AgentState) -> AgentState:
         logger.info(f"  - error_line_number: {error_line_number}")
         logger.info(f"  - error_file_type: {error_file_type}")
         
-        # Persist metadata to database early for reliability
+        # Persist GitHub metadata to database early for reliability
         if repo_full_name and error_file_path:
             try:
                 from storage.database import get_session
                 from storage.incident_repository import IncidentRepository
-                
+
                 with get_session() as session:
                     repo_db = IncidentRepository(session)
                     repo_db.update(
                         incident_id=incident_id,
-                        github_repo=repo_full_name,
-                        github_file_path=error_file_path
+                        repo_full_name=repo_full_name,
+                        error_file_path=error_file_path,
                     )
                     logger.debug(f"[Fix Generation] ✓ Persisted GitHub metadata to database")
             except Exception as db_error:

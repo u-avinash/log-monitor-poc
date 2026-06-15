@@ -1,7 +1,6 @@
 """Human approval workflow handler node."""
 import logging
 from datetime import datetime
-import time
 from agents.state import AgentState, WORKFLOW_TOTAL_STEPS
 from storage.database import get_session
 from storage.incident_repository import IncidentRepository
@@ -126,40 +125,3 @@ def await_approval_node(state: AgentState) -> AgentState:
         ]
     
     return state
-
-
-def check_approval_status(incident_id: str) -> tuple[bool, str, str]:
-    """
-    Check if incident has been approved/rejected.
-    
-    This is called by the workflow to check if approval was granted.
-    
-    Args:
-        incident_id: Incident ID to check
-        
-    Returns:
-        Tuple of (has_decision, decision, notes)
-        - has_decision: True if approved or rejected
-        - decision: "approved" or "rejected"
-        - notes: User-provided notes
-    """
-    try:
-        with get_session() as session:
-            repo = IncidentRepository(session)
-            incident = repo.get_by_id(incident_id)
-            
-            if not incident:
-                return False, "pending", "Incident not found"
-            
-            # Check approval_status field
-            approval_status = incident.approval_status
-            approval_notes = incident.approval_notes or ""
-            
-            if approval_status in ['approved', 'rejected']:
-                return True, approval_status, approval_notes
-            else:
-                return False, 'pending', ""
-                
-    except Exception as e:
-        logger.error(f"Error checking approval status: {str(e)}")
-        return False, 'pending', f"Error: {str(e)}"

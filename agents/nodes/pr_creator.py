@@ -2,7 +2,10 @@
 import logging
 from datetime import datetime
 from agents.state import AgentState
+from config.settings import get_settings
 from integrations.github_client import GitHubClient
+
+_settings = get_settings()
 
 logger = logging.getLogger(__name__)
 
@@ -157,7 +160,7 @@ def create_pr_node(state: AgentState) -> AgentState:
 ### 📎 Related Resources
 - **Jira Ticket:** {state.get('jira_ticket_url', 'N/A')}
 - **Patch File:** `{state.get('patch_path', 'N/A')}`
-- **Dashboard:** http://localhost:8501
+- **Dashboard:** {_settings.ui_base_url}
 - **Incident ID:** #{incident_id}
 
 ### ⚠️ Review Checklist

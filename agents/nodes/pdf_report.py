@@ -75,23 +75,19 @@ def generate_pdf_report(state: AgentState) -> Dict[str, Any]:
         if pdf_path:
             state["pdf_path"] = pdf_path
             logger.info(f"PDF report generated: {pdf_path}")
-            
+
             # Update workflow tracking
-            if 'workflow_completed_steps' not in state:
-                state['workflow_completed_steps'] = []
-            
-            # Add step only if not already completed (prevent duplicates)
-            if 'generate_pdf' not in state['workflow_completed_steps']:
-                state['workflow_completed_steps'].append('generate_pdf')
-            
-            # Calculate progress based on 11 total workflow steps
-            state['workflow_progress_pct'] = len(state['workflow_completed_steps']) / 11.0
-            
+            completed_steps = list(state.get('workflow_completed_steps') or [])
+            if 'generate_pdf' not in completed_steps:
+                completed_steps.append('generate_pdf')
+            state['workflow_completed_steps'] = completed_steps
+            state['workflow_progress_pct'] = len(completed_steps) / 11.0
+
             # Update database with PDF path and workflow progress
             try:
                 from storage.database import get_session
                 from storage.incident_repository import IncidentRepository
-                
+
                 with get_session() as session:
                     repo = IncidentRepository(session)
                     repo.update(
@@ -104,24 +100,21 @@ def generate_pdf_report(state: AgentState) -> Dict[str, Any]:
                 logger.info(f"PDF path saved to database: {pdf_path}")
             except Exception as db_error:
                 logger.warning(f"Failed to update PDF path in DB: {db_error}")
-            
-            state["messages"].append({
-                "role": "system",
-                "content": f"✓ PDF report generated: {pdf_path}"
-            })
+
+            state["messages"] = state.get("messages", []) + [
+                f"✓ PDF report generated: {pdf_path}"
+            ]
         else:
             logger.error(f"Failed to generate PDF report for incident {incident_id}")
-            state["messages"].append({
-                "role": "system",
-                "content": "Failed to generate PDF report"
-            })
-        
+            state["messages"] = state.get("messages", []) + [
+                "⚠️ Failed to generate PDF report"
+            ]
+
         return state
-        
+
     except Exception as e:
         logger.error(f"Error generating PDF report: {str(e)}")
-        state["messages"].append({
-            "role": "system",
-            "content": f"Error generating PDF report: {str(e)}"
-        })
+        state["messages"] = state.get("messages", []) + [
+            f"❌ Error generating PDF report: {str(e)}"
+        ]
         return state

@@ -11,18 +11,28 @@ import operator
 # Update this value when adding or removing workflow nodes.
 WORKFLOW_TOTAL_STEPS = 11
 
-# Canonical ordered list of workflow step IDs (matches LangGraph node names)
+# Canonical ordered list of workflow step IDs used in workflow_completed_steps
+# tracking and UI progress display.
+#
+# NOTE: These are the *display* step IDs used by the UI (server.py) and stored in
+# the `workflow_completed_steps` DB column.  The underlying LangGraph node names
+# differ in two cases:
+#   - "generate_patch"  →  LangGraph node: "generate_patch_file"
+#   - "create_jira" / "create_pr"  →  LangGraph node: "create_jira_pr" (combined)
+#
+# Patch generation runs BEFORE await_approval so the reviewer can download and
+# test the patch before making their approval decision.
 WORKFLOW_STEP_IDS = [
     "assess_severity",
     "generate_rca",
     "generate_fix",
     "generate_pdf",
     "reflect",
+    "generate_patch",        # LangGraph node: generate_patch_file
     "await_approval",
-    "generate_patch",
     "send_notifications",
-    "create_jira",
-    "create_pr",
+    "create_jira",           # LangGraph node: create_jira_pr (first half)
+    "create_pr",             # LangGraph node: create_jira_pr (second half)
     "finalize",
 ]
 
@@ -91,6 +101,7 @@ class AgentState(TypedDict):
     github_pr_number: Optional[int]
     jira_ticket_key: Optional[str]
     jira_ticket_url: Optional[str]
+    jira_issue_type: Optional[str]  # e.g. "Bug", set by jira_creator; read by pr_creator for branch prefix
     pdf_path: Optional[str]
     patch_path: Optional[str]
 
@@ -112,6 +123,7 @@ class AgentState(TypedDict):
     workflow_completed_steps: Optional[List[str]]  # List of completed workflow steps
     workflow_progress_pct: Optional[float]  # Workflow progress percentage (0.0 to 1.0)
     error_message: Optional[str]  # Error if workflow fails
+    jira_error: Optional[str]     # Jira API error message (persisted to DB for UI display)
     messages: Annotated[List[str], operator.add]  # Audit trail
     
     # Timestamps (ISO format strings)
@@ -215,6 +227,7 @@ def create_initial_state(
         github_pr_number=None,
         jira_ticket_key=None,
         jira_ticket_url=None,
+        jira_issue_type=None,
         pdf_path=None,
         patch_path=None,
 
@@ -236,6 +249,7 @@ def create_initial_state(
         workflow_completed_steps=[],
         workflow_progress_pct=0.0,
         error_message=None,
+        jira_error=None,
         messages=[],
         
         # Timestamps

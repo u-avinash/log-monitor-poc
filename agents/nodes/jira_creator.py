@@ -33,10 +33,9 @@ def create_jira_ticket(state: AgentState) -> Dict[str, Any]:
             jira_client = JiraClient(project_id=state.get("project_id"))
         except ValueError as cfg_err:
             logger.warning("Jira not configured, skipping ticket creation: %s", cfg_err)
-            state["messages"].append({
-                "role": "system",
-                "content": f"Jira ticket creation skipped: {cfg_err}",
-            })
+            state["messages"] = state.get("messages", []) + [
+                f"ℹ️ Jira ticket creation skipped: {cfg_err}"
+            ]
             return state
 
         # Extract incident details
@@ -71,26 +70,21 @@ def create_jira_ticket(state: AgentState) -> Dict[str, Any]:
             state["jira_ticket_url"] = ticket_info["ticket_url"]
             state["jira_issue_type"] = "Bug"
             state["jira_error"] = None  # Clear any previous errors
-            
-            # Update workflow tracking
-            if 'workflow_completed_steps' not in state:
-                state['workflow_completed_steps'] = []
 
-            # Add step only if not already completed (prevent duplicates)
-            # Use 'create_jira' instead of legacy 'create_jira_pr'
-            if 'create_jira' not in state['workflow_completed_steps']:
-                state['workflow_completed_steps'].append('create_jira')
-            
-            # Calculate progress based on 11 total workflow steps
-            state['workflow_progress_pct'] = len(state['workflow_completed_steps']) / 11.0
-            
+            # Update workflow tracking
+            completed_steps = list(state.get('workflow_completed_steps') or [])
+            if 'create_jira' not in completed_steps:
+                completed_steps.append('create_jira')
+            state['workflow_completed_steps'] = completed_steps
+            state['workflow_progress_pct'] = len(completed_steps) / 11.0
+
             logger.info(f"Created Jira ticket {ticket_info['ticket_key']} for incident {incident_id}")
-            
+
             # Update database with workflow progress
             try:
                 from storage.database import get_session
                 from storage.incident_repository import IncidentRepository
-                
+
                 with get_session() as session:
                     repo = IncidentRepository(session)
                     repo.update(
@@ -103,21 +97,20 @@ def create_jira_ticket(state: AgentState) -> Dict[str, Any]:
                     )
             except Exception as db_error:
                 logger.warning(f"Failed to update workflow progress in DB: {db_error}")
-            
-            state["messages"].append({
-                "role": "system",
-                "content": f"✓ Jira ticket created: {ticket_info['ticket_key']} - {ticket_info['ticket_url']}"
-            })
+
+            state["messages"] = state.get("messages", []) + [
+                f"✓ Jira ticket created: {ticket_info['ticket_key']} — {ticket_info['ticket_url']}"
+            ]
         else:
             error_msg = "Failed to create Jira ticket - check credentials and project permissions"
             logger.error(f"{error_msg} for incident {incident_id}")
             state["jira_error"] = error_msg
-            
+
             # Update workflow tracking even on failure
             try:
                 from storage.database import get_session
                 from storage.incident_repository import IncidentRepository
-                
+
                 with get_session() as session:
                     repo = IncidentRepository(session)
                     repo.update(
@@ -127,71 +120,18 @@ def create_jira_ticket(state: AgentState) -> Dict[str, Any]:
                     )
             except Exception as db_error:
                 logger.warning(f"Failed to update failure status in DB: {db_error}")
-            
-            state["messages"].append({
-                "role": "system",
-                "content": f"❌ {error_msg}"
-            })
-        
+
+            state["messages"] = state.get("messages", []) + [f"❌ {error_msg}"]
+
         return state
-        
+
     except Exception as e:
         error_msg = str(e)
         logger.error(f"Error creating Jira ticket: {error_msg}")
         state["jira_error"] = error_msg
-        state["messages"].append({
-            "role": "system",
-            "content": f"❌ Jira error: {error_msg}"
-        })
+        state["messages"] = state.get("messages", []) + [f"❌ Jira error: {error_msg}"]
         return state
 
-
-def update_jira_with_rca(state: AgentState) -> Dict[str, Any]:
-    """
-    Update existing Jira ticket with RCA findings.
-    
-    Args:
-        state: Current agent state
-        
-    Returns:
-        Updated state
-    """
-    logger.info(f"Updating Jira ticket with RCA for incident {state.get('incident_id')}")
-    
-    try:
-        ticket_key = state.get("jira_ticket_key")
-        rca_text = state.get("rca_text")
-        rca_confidence = state.get("rca_confidence")
-        
-        if not ticket_key or not rca_text:
-            logger.warning("Missing ticket key or RCA text, skipping update")
-            return state
-        
-        try:
-            jira_client = JiraClient(project_id=state.get("project_id"))
-        except ValueError as cfg_err:
-            logger.warning("Jira not configured, skipping RCA update: %s", cfg_err)
-            return state
-
-        # Add RCA comment
-        success = jira_client.add_rca_update(
-            ticket_key=ticket_key,
-            rca_text=rca_text,
-            confidence=rca_confidence
-        )
-        
-        if success:
-            logger.info(f"Updated Jira ticket {ticket_key} with RCA")
-            state["messages"].append({
-                "role": "system",
-                "content": f"Added RCA to Jira ticket {ticket_key}"
-            })
-        
-        return state
-        
-    except Exception as e:
-        logger.error(f"Error updating Jira with RCA: {str(e)}")
-        return state
 
 
 def attach_patch_to_jira(state: AgentState) -> Dict[str, Any]:
@@ -237,18 +177,15 @@ def attach_patch_to_jira(state: AgentState) -> Dict[str, Any]:
                 # The Jira API add_attachment expects: (issue, attachment)
                 # Pass the file path directly, not a file object.
                 jira_client.client.add_attachment(ticket_key, artifact_path)
-
                 logger.info("Attached %s to Jira ticket %s", artifact_kind, ticket_key)
-                state["messages"].append({
-                    "role": "system",
-                    "content": f"✓ {artifact_label} attached to Jira ticket {ticket_key}"
-                })
+                state["messages"] = state.get("messages", []) + [
+                    f"✓ {artifact_label} attached to Jira ticket {ticket_key}"
+                ]
             except Exception as attach_error:
                 logger.error("Failed to attach %s to Jira: %s", artifact_kind, attach_error)
-                state["messages"].append({
-                    "role": "system",
-                    "content": f"⚠️ Failed to attach {artifact_label.lower()}: {str(attach_error)}"
-                })
+                state["messages"] = state.get("messages", []) + [
+                    f"⚠️ Failed to attach {artifact_label.lower()}: {str(attach_error)}"
+                ]
         
         return state
         
@@ -299,10 +236,9 @@ The fix has been committed to this branch and is ready for review."""
         try:
             jira_client.add_comment(ticket_key, comment_text)
             logger.info(f"Updated Jira ticket {ticket_key} with branch info")
-            state["messages"].append({
-                "role": "system",
-                "content": f"✓ Branch info added to Jira ticket {ticket_key}"
-            })
+            state["messages"] = state.get("messages", []) + [
+                f"✓ Branch info added to Jira ticket {ticket_key}"
+            ]
         except Exception as comment_error:
             logger.error(f"Failed to add branch comment: {comment_error}")
         
@@ -360,10 +296,9 @@ Commit: `{short_sha}`
         try:
             jira_client.add_comment(ticket_key, comment_text)
             logger.info(f"Updated Jira ticket {ticket_key} with commit details")
-            state["messages"].append({
-                "role": "system",
-                "content": f"✓ Commit details added to Jira ticket {ticket_key}"
-            })
+            state["messages"] = state.get("messages", []) + [
+                f"✓ Commit details added to Jira ticket {ticket_key}"
+            ]
         except Exception as comment_error:
             logger.error(f"Failed to add commit comment: {comment_error}")
 
@@ -425,25 +360,10 @@ Please review at your earliest convenience."""
         
         try:
             jira_client.add_comment(ticket_key, comment_text)
-            
-            # Also try to create a web link
-            try:
-                jira_client.client.create_issue_link(
-                    type="relates to",
-                    inwardIssue=ticket_key,
-                    outwardIssue=pr_url,
-                    comment={
-                        "body": f"Automated fix PR: {pr_url}"
-                    }
-                )
-            except:
-                pass  # Link creation might fail if not supported
-            
             logger.info(f"Updated Jira ticket {ticket_key} with PR details")
-            state["messages"].append({
-                "role": "system",
-                "content": f"✓ PR details added to Jira ticket {ticket_key}"
-            })
+            state["messages"] = state.get("messages", []) + [
+                f"✓ PR details added to Jira ticket {ticket_key}"
+            ]
         except Exception as comment_error:
             logger.error(f"Failed to add PR comment: {comment_error}")
         
@@ -452,19 +372,6 @@ Please review at your earliest convenience."""
     except Exception as e:
         logger.error(f"Error updating Jira with PR: {str(e)}")
         return state
-
-
-def link_jira_to_pr(state: AgentState) -> Dict[str, Any]:
-    """
-    Link Jira ticket to GitHub PR (legacy function - use update_jira_with_pr).
-
-    Args:
-        state: Current agent state
-
-    Returns:
-        Updated state
-    """
-    return update_jira_with_pr(state)
 
 
 def sync_jira_development_info(state: AgentState) -> Dict[str, Any]:

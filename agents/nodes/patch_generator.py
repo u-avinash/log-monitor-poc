@@ -1,6 +1,7 @@
 """Patch file generation node for agent workflow."""
 import logging
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -115,8 +116,7 @@ def generate_patch_file_node(state: AgentState) -> AgentState:
         if not fixed_code:
             # Could not match the targeted fix to the original code via _apply_targeted_fix.
             # Extract the two code blocks from the LLM response and diff them directly.
-            import re as _re
-            code_blocks = _re.findall(r'```(?:\w+)?\n(.*?)\n```', proposed_fix, _re.DOTALL)
+            code_blocks = re.findall(r'```(?:\w+)?\n(.*?)\n```', proposed_fix, re.DOTALL)
             if len(code_blocks) >= 2:
                 original_block = code_blocks[0].strip()
                 fixed_block = code_blocks[1].strip()
@@ -209,7 +209,6 @@ def generate_patch_file_node(state: AgentState) -> AgentState:
             diff_lines = list(diff)
             diff_content = ''.join(diff_lines)
 
-        import re
         # Clean up the diff - remove multi-line comment blocks that confuse Studio
         diff_content = re.sub(r'\+/\*\s*\n', '', diff_content)
         diff_content = re.sub(r'\+\s*\*/\s*\n', '', diff_content)
@@ -430,8 +429,6 @@ def _apply_targeted_fix(original_code: str, proposed_fix: str, state: AgentState
     logger.info(f"[Patch Generation] Applying targeted fix to original code")
     
     try:
-        import re
-        
         code_blocks = re.findall(r'```(?:\w+)?\n(.*?)\n```', proposed_fix, re.DOTALL)
         
         if len(code_blocks) >= 2:
@@ -524,8 +521,6 @@ def _create_conceptual_fix_document(
     Uses whatever code blocks the LLM returned to produce a best-effort unified diff.
     The file extension is always .patch (never .md) so downstream tooling can apply it.
     """
-    import re as _re
-
     try:
         patch_dir = Path(settings.patch_output_dir)
         patch_dir.mkdir(parents=True, exist_ok=True)
@@ -535,7 +530,7 @@ def _create_conceptual_fix_document(
         patch_path = patch_dir / patch_filename
 
         # Extract code blocks from the LLM response
-        code_blocks = _re.findall(r'```(?:\w+)?\n(.*?)\n```', proposed_fix, _re.DOTALL)
+        code_blocks = re.findall(r'```(?:\w+)?\n(.*?)\n```', proposed_fix, re.DOTALL)
         original_block = (code_blocks[0].strip() if len(code_blocks) >= 1 else "").splitlines(keepends=True)
         fixed_block    = (code_blocks[1].strip() if len(code_blocks) >= 2 else
                           code_blocks[0].strip() if len(code_blocks) == 1 else "").splitlines(keepends=True)
