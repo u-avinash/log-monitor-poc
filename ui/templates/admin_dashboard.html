@@ -219,7 +219,8 @@
       <div class="form-row">
         <div class="form-group">
           <label class="form-label" for="newUsername">Username *</label>
-          <input class="form-input" id="newUsername" type="text" placeholder="jsmith" />
+          <input class="form-input" id="newUsername" type="text" placeholder="e.g. jsmith (not 'admin')" />
+          <div class="form-hint" style="font-size:.72rem;color:var(--text-muted,#6b7280);margin-top:3px;">The username <strong>admin</strong> is reserved for the system administrator.</div>
         </div>
         <div class="form-group">
           <label class="form-label" for="newUserEmail">Email *</label>
@@ -408,6 +409,14 @@ async function createUser() {
 
   if (!username || !email || !password) {
     prismAlert('Username, email and password are required');
+    return;
+  }
+
+  // Guard reserved system usernames
+  const RESERVED = ['admin'];
+  if (RESERVED.includes(username.toLowerCase())) {
+    prismAlert("Username '" + username + "' is reserved. Please choose a different username (e.g. your first name or employee ID).");
+    document.getElementById('newUsername').focus();
     return;
   }
 

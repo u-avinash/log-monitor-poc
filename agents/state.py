@@ -2,6 +2,30 @@
 from typing import TypedDict, Annotated, Optional, List
 import operator
 
+# ---------------------------------------------------------------------------
+# Workflow constants
+# ---------------------------------------------------------------------------
+
+# Total number of steps in the full incident processing workflow.
+# Used to calculate workflow_progress_pct consistently across all nodes.
+# Update this value when adding or removing workflow nodes.
+WORKFLOW_TOTAL_STEPS = 11
+
+# Canonical ordered list of workflow step IDs (matches LangGraph node names)
+WORKFLOW_STEP_IDS = [
+    "assess_severity",
+    "generate_rca",
+    "generate_fix",
+    "generate_pdf",
+    "reflect",
+    "await_approval",
+    "generate_patch",
+    "send_notifications",
+    "create_jira",
+    "create_pr",
+    "finalize",
+]
+
 
 class AgentState(TypedDict):
     """
@@ -10,6 +34,7 @@ class AgentState(TypedDict):
     """
     # Incident identification
     incident_id: str
+    project_id: Optional[str]
     app_name: str
     environment: str
     
@@ -51,6 +76,7 @@ class AgentState(TypedDict):
     overall_quality_score: Optional[float]  # 0-1
     quality_concerns: Optional[List[str]]  # Issues found
     quality_recommendation: Optional[str]  # "APPROVE" or "REJECT"
+    reflection_failed: Optional[bool]  # True when quality reflection could not complete normally
     
     # Approval workflow
     requires_approval: bool
@@ -67,6 +93,15 @@ class AgentState(TypedDict):
     jira_ticket_url: Optional[str]
     pdf_path: Optional[str]
     patch_path: Optional[str]
+
+    # Patch / PR artefacts (populated during post-approval workflow)
+    fixed_file_content: Optional[str]   # Complete fixed file content for PR commit
+    fix_branch: Optional[str]           # Branch name used for the fix
+    branch_name: Optional[str]          # GitHub branch name created for PR
+    pr_url: Optional[str]               # Pull request URL
+    pr_number: Optional[int]            # Pull request number
+    commit_sha: Optional[str]           # Commit SHA for the fix
+    commit_url: Optional[str]           # Commit URL
     
     # Notifications
     slack_notified: bool
@@ -97,7 +132,8 @@ def create_initial_state(
     severity: str,
     is_duplicate: bool,
     created_at: str,
-    metadata: Optional[dict] = None
+    metadata: Optional[dict] = None,
+    project_id: Optional[str] = None
 ) -> AgentState:
     """
     Create initial agent state from incident data.
@@ -122,6 +158,7 @@ def create_initial_state(
     return AgentState(
         # Identification
         incident_id=incident_id,
+        project_id=project_id,
         app_name=app_name,
         environment=environment,
         
@@ -163,6 +200,7 @@ def create_initial_state(
         overall_quality_score=None,
         quality_concerns=None,
         quality_recommendation=None,
+        reflection_failed=None,
         
         # Approval workflow
         requires_approval=False,
@@ -179,6 +217,15 @@ def create_initial_state(
         jira_ticket_url=None,
         pdf_path=None,
         patch_path=None,
+
+        # Patch / PR artefacts
+        fixed_file_content=None,
+        fix_branch=None,
+        branch_name=None,
+        pr_url=None,
+        pr_number=None,
+        commit_sha=None,
+        commit_url=None,
         
         # Notifications
         slack_notified=False,

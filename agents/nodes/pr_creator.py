@@ -3,10 +3,8 @@ import logging
 from datetime import datetime
 from agents.state import AgentState
 from integrations.github_client import GitHubClient
-from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
 
 
 def create_pr_node(state: AgentState) -> AgentState:
@@ -40,15 +38,19 @@ def create_pr_node(state: AgentState) -> AgentState:
         return state
     
     try:
-        github_client = GitHubClient()
-        
-        if not github_client.client:
-            logger.warning("GitHub client not configured, skipping PR creation")
+        try:
+            github_client = GitHubClient(project_id=state.get("project_id"))
+        except ValueError as cfg_err:
+            logger.warning("GitHub not configured, skipping PR creation: %s", cfg_err)
             state['messages'] = state.get('messages', []) + [
-                "ℹ️ GitHub PR creation skipped (not configured)"
+                f"ℹ️ GitHub PR creation skipped: {cfg_err}"
             ]
+            # Mark that PR was skipped because GitHub is simply not configured
+            # (not because of a data/content problem). finalize_node uses this flag
+            # to decide whether COMPLETED or JIRA_CREATED is the right terminal status.
+            state['pr_github_not_configured'] = True  # type: ignore[typeddict-unknown-key]
             return state
-        
+
         incident_id = state["incident_id"]
         jira_key = state.get("jira_ticket_key")
         jira_issue_type = (state.get("jira_issue_type") or "Bug").strip().lower()
@@ -95,14 +97,32 @@ def create_pr_node(state: AgentState) -> AgentState:
             state['messages'] = state.get('messages', []) + ["⚠️ PR creation skipped - no fixed file content"]
             return state
         
-        ticket_prefix = f"{branch_name} " if jira_key else ""
-        pr_title_prefix = f"[{branch_name}] " if jira_key else ""
+        # Commit message: lead with the bare Jira key so Jira smart-commit
+        # detection and the DevInfo API both recognise it unambiguously.
+        # Format: "KAN-619: Fix: <title>\n\nFixes incident #... in <file>"
+        if jira_key:
+            commit_msg = (
+                f"{jira_key}: Fix: {state.get('error_title', 'Auto-generated fix')}"
+                f"\n\nFixes incident #{incident_id} in {error_file_path}"
+            )
+        else:
+            commit_msg = (
+                f"Fix: {state.get('error_title', 'Auto-generated fix')}"
+                f"\n\nFixes incident #{incident_id} in {error_file_path}"
+            )
+
+        # Use only the bare Jira key in the title prefix (not the full branch
+        # path like "bug/KAN-619") so that Jira's smart-commit PR scanner and
+        # the GitHub-for-Jira webhook handler can recognise the issue key
+        # unambiguously. "bug/KAN-619" looks like a file path to the scanner;
+        # "[KAN-619]" is the canonical format Jira expects.
+        pr_title_prefix = f"[{jira_key}] " if jira_key else ""
         pr_info = github_client.create_fix_pr(
             incident_id=incident_id,
             branch_name=branch_name,
             file_path=error_file_path,  # Use actual file path from error
             file_content=fixed_file_content,  # Use complete fixed file content
-            commit_message=f"{ticket_prefix}Fix: {state.get('error_title', 'Auto-generated fix')}\n\nFixes incident #{incident_id} in {error_file_path}",
+            commit_message=commit_msg,
             pr_title=f"{pr_title_prefix}[Auto-Fix] Incident #{incident_id}: {state.get('error_title', 'Fix')}",
             repo_full_name=repo_full_name,  # Use actual repository
             pr_body=f"""## 🤖 Auto-Generated Fix for Incident #{incident_id}
@@ -164,26 +184,28 @@ Before merging this PR, please verify:
 """
         )
         
-        if pr_info:
+        if pr_info is not None:
             # Update state with PR details
             state['pr_url'] = pr_info['pr_url']
             state['pr_number'] = pr_info['pr_number']
             state['branch_name'] = branch_name
+            state['fix_branch'] = branch_name
+            state['github_branch'] = branch_name
+            state['github_pr_url'] = pr_info['pr_url']
+            state['github_pr_number'] = pr_info['pr_number']
             state['commit_sha'] = pr_info.get('commit_sha')
             state['commit_url'] = pr_info.get('commit_url')
             state['current_node'] = 'create_pr'
             state['updated_at'] = datetime.utcnow().isoformat()
             
             # Update workflow tracking
-            if 'workflow_completed_steps' not in state:
-                state['workflow_completed_steps'] = []
-
-            # Add step only if not already completed (prevent duplicates)
-            if 'create_pr' not in state['workflow_completed_steps']:
-                state['workflow_completed_steps'].append('create_pr')
+            completed_steps = list(state.get('workflow_completed_steps') or [])
+            if 'create_pr' not in completed_steps:
+                completed_steps.append('create_pr')
+            state['workflow_completed_steps'] = completed_steps
             
             # Calculate progress based on 11 total workflow steps
-            state['workflow_progress_pct'] = len(state['workflow_completed_steps']) / 11.0
+            state['workflow_progress_pct'] = len(completed_steps) / 11.0
             
             state['messages'] = state.get('messages', []) + [
                 f"✓ GitHub PR created: #{pr_info['pr_number']}",
@@ -200,11 +222,11 @@ Before merging this PR, please verify:
                     repo.update(
                         incident_id=incident_id,
                         current_workflow_node='create_pr',
-                        workflow_completed_steps=state['workflow_completed_steps'],
+                        workflow_completed_steps=completed_steps,
                         workflow_progress_pct=state['workflow_progress_pct'],
                         pr_url=pr_info['pr_url'],
                         pr_number=pr_info['pr_number'],
-                        branch_name=branch_name,
+                        fix_branch=branch_name,
                         commit_sha=pr_info.get('commit_sha'),
                         commit_url=pr_info.get('commit_url')
                     )

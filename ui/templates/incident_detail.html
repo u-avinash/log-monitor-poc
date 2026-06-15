@@ -1,262 +1,870 @@
 {% extends "base.html" %}
-
 {% block title %}{{ inc.incident_id }} — Prism{% endblock %}
 {% block topbar_title %}Incident Detail{% endblock %}
 
 {% block topbar_actions %}
 <a href="/incidents" class="btn btn-ghost btn-sm">← Back</a>
-{% if inc.status not in ('COMPLETED', 'PR_CREATED') %}
-<form method="post" action="/api/incidents/{{ inc.incident_id }}/trigger" style="display:inline;" id="triggerForm">
-  <button class="btn btn-secondary btn-sm" type="button" id="triggerBtn"
-          data-incident="{{ inc.incident_id }}">⚡ Re-trigger</button>
-</form>
+<button class="btn btn-ghost btn-sm" id="refreshBtn" title="Refresh data">↻ Refresh</button>
+{% if inc.status not in ('COMPLETED', 'PR_CREATED', 'APPROVED', 'REJECTED', 'FAILED', 'PATCH_GENERATING', 'CREATING_JIRA_PR') and inc.approval_status not in ('approved', 'rejected') %}
+<button class="btn btn-secondary btn-sm" id="triggerBtn" data-incident="{{ inc.incident_id }}">⚡ Re-trigger</button>
 {% endif %}
+{% if inc.pr_url %}<a href="{{ inc.pr_url }}" target="_blank" class="btn btn-success btn-sm">↗ View PR</a>{% endif %}
+{% if inc.jira_ticket_url %}<a href="{{ inc.jira_ticket_url }}" target="_blank" class="btn btn-ghost btn-sm">↗ Jira</a>{% endif %}
 {% endblock %}
 
 {% block content %}
+<div style="display:flex;flex-direction:column;gap:16px;">
 
-<!-- ── Header row ─────────────────────────────────────────────────────── -->
-<div class="page-header">
-  <div style="flex:1; min-width:0;">
-    <div style="display:flex; align-items:center; gap:var(--space-3); flex-wrap:wrap; margin-bottom:var(--space-2);">
+  <!-- Hero -->
+  <div style="background:#fff;border:1px solid var(--gray-200);border-radius:14px;padding:22px 24px;box-shadow:var(--shadow-sm);">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
       <span class="badge {{ inc.severity | severity_badge }}">{{ inc.severity or '—' }}</span>
-      <span class="badge {{ inc.status | status_badge }}">{{ (inc.status or 'UNKNOWN').replace('_',' ') }}</span>
-      {% if inc.approval_status == 'pending' %}
-      <span class="badge badge-warning">Needs Approval</span>
-      {% elif inc.approval_status == 'approved' %}
-      <span class="badge badge-success">Approved</span>
-      {% elif inc.approval_status == 'rejected' %}
-      <span class="badge badge-error">Rejected</span>
-      {% endif %}
+      <span class="badge {{ inc.status | status_badge }}" id="statusBadge">{{ (inc.status or 'UNKNOWN').replace('_', ' ') }}</span>
+      {% if inc.approval_status == 'pending' %}<span class="badge badge-warning">Needs Approval</span>{% endif %}
+      {% if inc.approval_status == 'approved' and inc.status not in ('APPROVED', 'COMPLETED', 'PR_CREATED') %}<span class="badge badge-success">Approved</span>{% endif %}
+      {% if inc.approval_status == 'rejected' and inc.status != 'REJECTED' %}<span class="badge badge-error">Rejected</span>{% endif %}
     </div>
-    <h1 class="page-title" style="font-size:var(--text-xl);">
-      {{ inc.error_title or 'Untitled Incident' }}
-    </h1>
-    <p class="page-subtitle">
-      {{ inc.incident_id }}
-      &nbsp;·&nbsp; {{ inc.app_name }}
-      &nbsp;·&nbsp; {{ inc.created_at | fmt_dt }}
-      {% if inc.repo_full_name %}
-      &nbsp;·&nbsp; {{ inc.repo_full_name }}
-      {% endif %}
-    </p>
-  </div>
-  <div style="display:flex; gap:var(--space-2); flex-shrink:0; flex-wrap:wrap;">
-    {% if inc.pr_url %}
-    <a href="{{ inc.pr_url }}" target="_blank" class="btn btn-success btn-sm">↗ View PR</a>
-    {% endif %}
-    {% if inc.jira_ticket_url %}
-    <a href="{{ inc.jira_ticket_url }}" target="_blank" class="btn btn-ghost btn-sm">↗ Jira</a>
-    {% endif %}
-  </div>
-</div>
-
-<!-- ── Workflow progress ───────────────────────────────────────────────── -->
-<div class="card" style="margin-bottom:var(--space-5);">
-  <div class="card-header">
-    <h2 class="card-title">Workflow Progress</h2>
-    <span class="badge {% if is_failed %}badge-error{% elif progress_pct == 100 %}badge-success{% else %}badge-info{% endif %}">
-      {{ progress_pct }}%
-    </span>
-  </div>
-  <div class="card-body">
-    <div class="progress-bar-track" style="height:8px; margin-bottom:var(--space-4);">
-      <div class="progress-bar-fill {% if is_failed %}progress-bar--error{% else %}progress-bar--info{% endif %}"
-           style="width:{{ progress_pct }}%;"></div>
-    </div>
-    <div class="workflow-steps">
-      {% for step in workflow_steps %}
-      <div class="workflow-step workflow-step--{{ step.state }}">
-        <div class="workflow-step-icon">
-          {% if step.state == 'completed' %}✓
-          {% elif step.state == 'active' %}◉
-          {% elif step.state == 'failed' %}✕
-          {% else %}○{% endif %}
-        </div>
-        <div class="workflow-step-label">{{ step.label }}</div>
+    <h1 style="font-size:1.5rem;font-weight:800;color:var(--gray-900);letter-spacing:-.03em;line-height:1.2;margin:0 0 6px;">{{ inc.error_title or 'Untitled Incident' }}</h1>
+    <p style="font-size:.85rem;color:var(--gray-500);margin:0 0 18px;">Incident <strong>{{ inc.incident_id }}</strong> · {{ inc.app_name or 'unknown application' }}</p>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;">
+      <div style="padding:10px 14px;border:1px solid var(--gray-200);border-radius:12px;background:var(--gray-50);">
+        <div style="font-size:.67rem;font-weight:700;color:var(--gray-400);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Created</div>
+        <div style="font-size:.82rem;font-weight:600;color:var(--gray-800);">{{ inc.created_at | fmt_dt }}</div>
       </div>
-      {% endfor %}
+      <div style="padding:10px 14px;border:1px solid var(--gray-200);border-radius:12px;background:var(--gray-50);">
+        <div style="font-size:.67rem;font-weight:700;color:var(--gray-400);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Environment</div>
+        <div style="font-size:.82rem;font-weight:600;color:var(--gray-800);">{{ inc.environment or 'Not set' }}</div>
+      </div>
+      <div style="padding:10px 14px;border:1px solid var(--gray-200);border-radius:12px;background:var(--gray-50);">
+        <div style="font-size:.67rem;font-weight:700;color:var(--gray-400);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Repository</div>
+        <div style="font-size:.82rem;font-weight:600;color:var(--gray-800);word-break:break-all;">{{ inc.repo_full_name or 'Not linked' }}</div>
+      </div>
+        <div style="padding:10px 14px;border:1px solid var(--gray-200);border-radius:12px;background:var(--gray-50);">
+        <div style="font-size:.67rem;font-weight:700;color:var(--gray-400);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Current Node</div>
+        <div style="font-size:.82rem;font-weight:600;color:var(--gray-800);">{{ current_node_label or 'Waiting' }}</div>
+      </div>
     </div>
-    {% if current_node %}
-    <p style="margin-top:var(--space-3); font-size:var(--text-sm); color:var(--neutral-400);">
-      Current node: <code>{{ current_node }}</code>
-    </p>
+    {% if patch_artifact or pdf_artifact %}
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:14px;padding-top:14px;border-top:1px solid var(--gray-100);">
+      {% if pdf_artifact %}<a href="{{ pdf_artifact.preview_url }}" target="_blank" class="btn btn-ghost btn-sm">👁 RCA PDF</a>{% endif %}
+      {% if patch_artifact %}<a href="{{ patch_artifact.download_url }}" class="btn btn-secondary btn-sm">⬇ Patch</a>{% endif %}
+    </div>
     {% endif %}
   </div>
-</div>
 
-<!-- ── Tabs ────────────────────────────────────────────────────────────── -->
-<div class="tabs" id="detailTabs">
-  <button class="tab tab--active" data-tab="rca">Root Cause</button>
-  <button class="tab" data-tab="fix">Proposed Fix</button>
-  {% if diff_rows %}<button class="tab" data-tab="diff">Diff</button>{% endif %}
-  <button class="tab" data-tab="meta">Metadata</button>
-  {% if inc.status == 'PENDING_APPROVAL' or inc.approval_status == 'pending' %}
-  <button class="tab" data-tab="approval">Approval</button>
-  {% endif %}
-</div>
-
-<!-- Tab: Root Cause Analysis -->
-<div class="tab-panel tab-panel--active" data-panel="rca">
-  {% if inc.root_cause_analysis %}
-  <div class="card">
-    <div class="card-body prose-block">{{ inc.root_cause_analysis }}</div>
-  </div>
-  {% else %}
-  <div class="empty-state"><div class="empty-state-icon">🔬</div>
-    <div class="empty-state-title">RCA not yet generated</div></div>
-  {% endif %}
-</div>
-
-<!-- Tab: Proposed Fix -->
-<div class="tab-panel" data-panel="fix" hidden>
-  {% if inc.proposed_fix %}
-  <div class="card">
-    <div class="card-body prose-block">{{ inc.proposed_fix }}</div>
-  </div>
-  {% else %}
-  <div class="empty-state"><div class="empty-state-icon">🔧</div>
-    <div class="empty-state-title">Fix not yet generated</div></div>
-  {% endif %}
-</div>
-
-<!-- Tab: Diff viewer -->
-{% if diff_rows %}
-<div class="tab-panel" data-panel="diff" hidden>
-  <div class="card">
-    <div class="card-header"><h3 class="card-title">Patch Diff</h3></div>
-    <div class="card-body" style="padding:0; overflow:auto;">
-      <table class="diff-table">
-        <tbody>
-          {% for old_ln, new_ln, sign, text in diff_rows %}
-          <tr class="diff-row diff-row--{{ 'add' if sign == '+' else 'del' }}">
-            <td class="diff-ln">{{ old_ln or '' }}</td>
-            <td class="diff-ln">{{ new_ln or '' }}</td>
-            <td class="diff-sign">{{ sign }}</td>
-            <td class="diff-code"><code>{{ text }}</code></td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+  <!-- Workflow progress -->
+  <div style="background:#fff;border:1px solid var(--gray-200);border-radius:14px;overflow:hidden;box-shadow:var(--shadow-sm);">
+    <div style="padding:13px 18px;border-bottom:1px solid var(--gray-200);background:var(--gray-50);display:flex;align-items:center;justify-content:space-between;gap:12px;">
+      <div>
+        <div style="font-size:.87rem;font-weight:600;color:var(--gray-800);">Workflow Progress</div>
+        <div style="font-size:.73rem;color:var(--gray-500);margin-top:1px;">Automated incident response lifecycle from analysis to delivery.</div>
+      </div>
+      {% if is_failed %}
+      <span class="badge badge-error">{{ progress_pct }}%</span>
+      {% elif progress_pct == 100 %}
+      <span class="badge badge-success">{{ progress_pct }}%</span>
+      {% else %}
+      <span class="badge badge-info">{{ progress_pct }}%</span>
+      {% endif %}
     </div>
-  </div>
-</div>
-{% endif %}
-
-<!-- Tab: Metadata -->
-<div class="tab-panel" data-panel="meta" hidden>
-  <div class="card">
-    <div class="card-header"><h3 class="card-title">Incident Details</h3></div>
-    <div class="card-body">
-      <dl class="kv-list">
-        {% set meta_fields = [
-          ('Incident ID',      inc.incident_id),
-          ('App Name',         inc.app_name),
-          ('Severity',         inc.severity),
-          ('Status',           inc.status),
-          ('Approval Status',  inc.approval_status),
-          ('Repo',             inc.repo_full_name),
-          ('Branch',           inc.branch_name),
-          ('PR URL',           inc.pr_url),
-          ('Jira Ticket',      inc.jira_ticket_url),
-          ('Commit SHA',       inc.commit_sha),
-          ('Created At',       inc.created_at | fmt_dt),
-          ('Updated At',       inc.updated_at | fmt_dt),
-          ('Approved At',      inc.approved_at | fmt_dt),
-          ('Approval Notes',   inc.approval_notes),
-          ('Occurrences',      inc.occurrence_count),
-          ('Error Type',       inc.error_type),
-          ('Environment',      inc.environment),
-        ] %}
-        {% for label, value in meta_fields %}
-        {% if value %}
-        <div class="kv-row">
-          <dt class="kv-key">{{ label }}</dt>
-          <dd class="kv-value">
-            {% if value and (value | string).startswith('http') %}
-            <a href="{{ value }}" target="_blank" class="link">{{ value }}</a>
-            {% else %}
-            {{ value }}
-            {% endif %}
-          </dd>
+    <div style="padding:16px 18px;">
+      <div style="background:var(--gray-200);border-radius:4px;width:100%;height:8px;margin-bottom:16px;overflow:hidden;">
+        {% if is_failed %}
+        <div style="height:8px;border-radius:4px;background:#dc2626;width:{{ progress_pct }}%;"></div>
+        {% elif progress_pct == 100 %}
+        <div style="height:8px;border-radius:4px;background:#059669;width:{{ progress_pct }}%;"></div>
+        {% else %}
+        <div style="height:8px;border-radius:4px;background:var(--prism-600);width:{{ progress_pct }}%;"></div>
+        {% endif %}
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;">
+        {% for step in workflow_steps %}
+        {% if step.state == 'completed' %}
+        <div style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 6px;border-radius:10px;border:1px solid #6ee7b7;background:#d1fae5;text-align:center;">
+          <span style="font-size:.95rem;color:#059669;">✓</span>
+          <div style="font-size:.68rem;font-weight:600;color:var(--gray-700);line-height:1.3;">{{ step.label }}</div>
+          <div style="font-size:.6rem;color:#059669;">Completed</div>
+        </div>
+        {% elif step.state == 'active' %}
+        <div style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 6px;border-radius:10px;border:1px solid #93c5fd;background:#dbeafe;text-align:center;">
+          <span style="font-size:.95rem;color:#1d4ed8;">◉</span>
+          <div style="font-size:.68rem;font-weight:600;color:var(--gray-700);line-height:1.3;">{{ step.label }}</div>
+          <div style="font-size:.6rem;color:#1d4ed8;">Active</div>
+        </div>
+        {% elif step.state == 'failed' %}
+        <div style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 6px;border-radius:10px;border:1px solid #fca5a5;background:#fee2e2;text-align:center;">
+          <span style="font-size:.95rem;color:#dc2626;">✕</span>
+          <div style="font-size:.68rem;font-weight:600;color:var(--gray-700);line-height:1.3;">{{ step.label }}</div>
+          <div style="font-size:.6rem;color:#dc2626;">Failed</div>
+        </div>
+        {% else %}
+        <div style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 6px;border-radius:10px;border:1px solid var(--gray-200);background:#fff;text-align:center;">
+          <span style="font-size:.95rem;color:var(--gray-300);">○</span>
+          <div style="font-size:.68rem;font-weight:600;color:var(--gray-600);line-height:1.3;">{{ step.label }}</div>
+          <div style="font-size:.6rem;color:var(--gray-400);">Pending</div>
         </div>
         {% endif %}
         {% endfor %}
-      </dl>
+      </div>
     </div>
   </div>
 
-  {% if inc.error_message %}
-  <div class="card" style="margin-top:var(--space-4);">
-    <div class="card-header"><h3 class="card-title">Error Message</h3></div>
-    <div class="card-body"><pre class="code-block">{{ inc.error_message }}</pre></div>
-  </div>
-  {% endif %}
+  <!-- Main + sidebar grid -->
+  <div style="display:grid;grid-template-columns:minmax(0,1.65fr) minmax(250px,.7fr);gap:16px;align-items:start;">
 
-  {% if inc.stack_trace %}
-  <div class="card" style="margin-top:var(--space-4);">
-    <div class="card-header"><h3 class="card-title">Stack Trace</h3></div>
-    <div class="card-body"><pre class="code-block">{{ inc.stack_trace }}</pre></div>
-  </div>
-  {% endif %}
-</div>
+    <!-- Main column -->
+    <div style="display:flex;flex-direction:column;gap:16px;">
 
-<!-- Tab: Approval -->
-{% if inc.status == 'PENDING_APPROVAL' or inc.approval_status == 'pending' %}
-<div class="tab-panel" data-panel="approval" hidden>
-  <div class="card" style="max-width:520px;">
-    <div class="card-header"><h3 class="card-title">Review Fix & Approve</h3></div>
-    <div class="card-body">
-      <p style="color:var(--neutral-300); margin-bottom:var(--space-4); font-size:var(--text-sm);">
-        Approving will trigger patch generation, Jira ticket creation, and PR submission.
-        Rejecting will stop the workflow and mark the incident as rejected.
-      </p>
+      <!-- Tab bar -->
+      <div style="display:flex;align-items:center;gap:2px;padding:5px;background:#fff;border:1px solid var(--gray-200);border-radius:12px;box-shadow:var(--shadow-sm);flex-wrap:wrap;" id="detailTabs">
+        <button class="tab tab--active" data-tab="rca" style="border-radius:8px;border-bottom:none !important;">Root Cause</button>
+        <button class="tab" data-tab="fix" style="border-radius:8px;border-bottom:none !important;">Proposed Fix</button>
+        <button class="tab" data-tab="artifacts" style="border-radius:8px;border-bottom:none !important;">Artifacts</button>
+        <button class="tab" data-tab="timeline" style="border-radius:8px;border-bottom:none !important;">Audit Trail</button>
+        {% if diff_rows %}<button class="tab" data-tab="diff" style="border-radius:8px;border-bottom:none !important;">Diff</button>{% endif %}
+        <button class="tab" data-tab="error" style="border-radius:8px;border-bottom:none !important;">🔴 Error</button>
+        <button class="tab" data-tab="meta" style="border-radius:8px;border-bottom:none !important;">Metadata</button>
+        {% if inc.status == 'PENDING_APPROVAL' or inc.approval_status == 'pending' %}
+        <button class="tab" data-tab="approval" style="border-radius:8px;border-bottom:none !important;">Approval</button>
+        {% endif %}
+        <button class="tab" data-tab="comments" style="border-radius:8px;border-bottom:none !important;" id="commentsTabBtn">💬 Comments</button>
+      </div>
 
-      <form id="approvalForm" data-incident="{{ inc.incident_id }}">
-        <div class="form-group">
-          <label class="form-label" for="approvalNotes">Notes (optional)</label>
-          <textarea id="approvalNotes" name="notes" class="input" rows="3"
-                    placeholder="Add review notes…"></textarea>
+      <!-- RCA -->
+      <div data-panel="rca">
+        {% if rca_text %}
+        <div style="background:#fff;border:1px solid var(--gray-200);border-radius:14px;overflow:hidden;box-shadow:var(--shadow-sm);">
+          <div style="padding:12px 16px;border-bottom:1px solid var(--gray-200);background:var(--gray-50);display:flex;align-items:center;justify-content:space-between;gap:10px;">
+            <div>
+              <div style="font-size:.87rem;font-weight:600;color:var(--gray-800);">Root Cause Analysis</div>
+              <div style="font-size:.73rem;color:var(--gray-500);margin-top:1px;">Diagnostic context explaining why this incident occurred.</div>
+            </div>
+            {% if inc.fetched_code or inc.error_file_path %}<span class="badge badge-info">Code-Aware</span>{% endif %}
+          </div>
+          <div style="padding:18px;font-size:.85rem;line-height:1.75;color:var(--gray-800);white-space:pre-wrap;word-break:break-word;">{{ rca_text }}</div>
         </div>
-        <div style="display:flex; gap:var(--space-3); margin-top:var(--space-4);">
-          <button type="button" class="btn btn-success" id="approveBtn"
-                  data-action="approve" data-incident="{{ inc.incident_id }}">
-            ✓ Approve Fix
-          </button>
-          <button type="button" class="btn btn-danger" id="rejectBtn"
-                  data-action="reject" data-incident="{{ inc.incident_id }}">
-            ✕ Reject
-          </button>
+        {% else %}
+        <div class="empty-state"><div class="empty-state-icon">🔬</div><div class="empty-state-title">RCA not yet generated</div></div>
+        {% endif %}
+      </div>
+
+      <!-- Fix -->
+      <div data-panel="fix" hidden>
+        {% if fix_text %}
+          {% if diff_rows %}
+          <div style="background:#fff;border:1px solid var(--gray-200);border-radius:14px;overflow:hidden;box-shadow:var(--shadow-sm);margin-bottom:14px;">
+            <div style="padding:12px 16px;border-bottom:1px solid var(--gray-200);background:var(--gray-50);display:flex;align-items:center;justify-content:space-between;gap:10px;">
+              <div>
+                <div style="font-size:.87rem;font-weight:600;color:var(--gray-800);">Code Diff</div>
+                <div style="font-size:.73rem;color:var(--gray-500);margin-top:1px;">Review-friendly diff of the proposed change.</div>
+              </div>
+              <span class="badge badge-success">PR Style</span>
+            </div>
+            <div style="padding:10px 14px;border-bottom:1px solid var(--gray-200);background:var(--gray-50);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+              <strong style="font-size:.82rem;color:var(--gray-900);">{{ inc.error_file_path or 'Generated patch' }}</strong>
+              <div style="display:flex;gap:10px;font-size:.74rem;color:var(--gray-500);">
+                {% if inc.repo_full_name %}<span>{{ inc.repo_full_name }}</span>{% endif %}
+                {% if inc.fix_branch %}<span>Branch: {{ inc.fix_branch }}</span>{% endif %}
+              </div>
+            </div>
+            <div class="diff-viewer" style="border-radius:0;overflow:auto;max-height:420px;">
+              <table class="diff-table"><tbody>
+                {% for old_ln, new_ln, sign, text in diff_rows %}
+                <tr class="diff-row diff-row--{{ 'add' if sign == '+' else 'del' }}">
+                  <td class="diff-ln">{{ old_ln or '' }}</td>
+                  <td class="diff-ln">{{ new_ln or '' }}</td>
+                  <td class="diff-sign">{{ sign }}</td>
+                  <td class="diff-code"><code>{{ text }}</code></td>
+                </tr>
+                {% endfor %}
+              </tbody></table>
+            </div>
+          </div>
+          {% endif %}
+          <div style="background:#fff;border:1px solid var(--gray-200);border-radius:14px;overflow:hidden;box-shadow:var(--shadow-sm);">
+            <div style="padding:12px 16px;border-bottom:1px solid var(--gray-200);background:var(--gray-50);">
+              <div style="font-size:.87rem;font-weight:600;color:var(--gray-800);">{% if diff_rows %}Fix Explanation{% else %}Proposed Fix{% endif %}</div>
+              <div style="font-size:.73rem;color:var(--gray-500);margin-top:1px;">Human-readable explanation of the recommended change.</div>
+            </div>
+            <div style="padding:18px;font-size:.85rem;line-height:1.75;color:var(--gray-800);white-space:pre-wrap;word-break:break-word;">{{ fix_text }}</div>
+          </div>
+        {% else %}
+        <div class="empty-state"><div class="empty-state-icon">🔧</div><div class="empty-state-title">Fix not yet generated</div></div>
+        {% endif %}
+      </div>
+
+      <!-- Artifacts — sub-tabbed: PDF | Patch -->
+      <div data-panel="artifacts" hidden>
+        <!-- Sub-tab bar -->
+        <div style="display:flex;gap:2px;padding:4px;background:#fff;border:1px solid var(--gray-200);border-radius:12px;box-shadow:var(--shadow-sm);margin-bottom:12px;" id="artifactSubTabs">
+          <button class="tab tab--active" data-artifact-tab="pdf" style="border-radius:8px;flex:1;border-bottom:none !important;">📄 RCA Report (PDF)</button>
+          <button class="tab" data-artifact-tab="patch" style="border-radius:8px;flex:1;border-bottom:none !important;">🩹 Fix Patch</button>
         </div>
-      </form>
+
+        <!-- PDF sub-panel -->
+        <div data-artifact-panel="pdf">
+          <div style="background:#fff;border:1px solid var(--gray-200);border-radius:14px;overflow:hidden;box-shadow:var(--shadow-sm);">
+            <div style="padding:12px 16px;border-bottom:1px solid var(--gray-200);background:var(--gray-50);display:flex;align-items:center;justify-content:space-between;gap:10px;">
+              <div>
+                <div style="font-size:.87rem;font-weight:600;color:var(--gray-800);">RCA Report (PDF)</div>
+                <div style="font-size:.73rem;color:var(--gray-500);margin-top:1px;">Full-width preview and download of the root cause analysis report.</div>
+              </div>
+              {% if pdf_artifact %}
+              <div style="display:flex;gap:8px;flex-shrink:0;">
+                <a href="{{ pdf_artifact.preview_url }}" target="_blank" class="btn btn-ghost btn-sm">↗ Open Tab</a>
+                <a href="{{ pdf_artifact.download_url }}" class="btn btn-secondary btn-sm">⬇ Download</a>
+              </div>
+              {% endif %}
+            </div>
+            <div style="padding:16px;">
+              {% if pdf_artifact %}
+              <iframe src="{{ pdf_artifact.preview_url }}" style="width:100%;height:700px;border:1px solid var(--gray-200);border-radius:10px;background:#f9fafb;" title="RCA PDF Preview"></iframe>
+              {% else %}
+              <div class="empty-state" style="padding:48px 24px;">
+                <div class="empty-state-icon">📄</div>
+                <div class="empty-state-title">PDF not yet generated</div>
+                <div style="font-size:.78rem;color:var(--gray-500);margin-top:4px;text-align:center;">The RCA PDF will appear here once the PDF generation workflow step completes.</div>
+              </div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+
+        <!-- Patch sub-panel -->
+        <div data-artifact-panel="patch" hidden>
+          <div style="background:#fff;border:1px solid var(--gray-200);border-radius:14px;overflow:hidden;box-shadow:var(--shadow-sm);">
+            <div style="padding:12px 16px;border-bottom:1px solid var(--gray-200);background:var(--gray-50);display:flex;align-items:center;justify-content:space-between;gap:10px;">
+              <div>
+                <div style="font-size:.87rem;font-weight:600;color:var(--gray-800);">Fix Patch</div>
+                <div style="font-size:.73rem;color:var(--gray-500);margin-top:1px;">Downloadable patch file and inline diff for this incident.</div>
+              </div>
+              {% if patch_artifact %}
+              <a href="{{ patch_artifact.download_url }}" class="btn btn-secondary btn-sm">⬇ Download Patch</a>
+              {% endif %}
+            </div>
+            <div style="padding:16px;">
+              {% if patch_artifact %}
+              <div style="padding:14px;border:1px solid var(--gray-200);border-radius:12px;background:var(--gray-50);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:{% if diff_rows %}16px{% else %}0{% endif %};">
+                <div>
+                  <div style="font-size:.84rem;font-weight:700;color:var(--gray-800);">{{ patch_artifact.name }}</div>
+                  <div style="font-size:.74rem;color:var(--gray-500);margin-top:2px;">Generated patch for {{ inc.incident_id }}</div>
+                </div>
+                <a href="{{ patch_artifact.download_url }}" class="btn btn-secondary btn-sm">⬇ Download</a>
+              </div>
+              {% if diff_rows %}
+              <div class="diff-viewer" style="border-radius:10px;overflow:auto;max-height:620px;border:1px solid var(--gray-200);">
+                <table class="diff-table"><tbody>
+                  {% for old_ln, new_ln, sign, text in diff_rows %}
+                  <tr class="diff-row diff-row--{{ 'add' if sign == '+' else 'del' }}">
+                    <td class="diff-ln">{{ old_ln or '' }}</td>
+                    <td class="diff-ln">{{ new_ln or '' }}</td>
+                    <td class="diff-sign">{{ sign }}</td>
+                    <td class="diff-code"><code>{{ text }}</code></td>
+                  </tr>
+                  {% endfor %}
+                </tbody></table>
+              </div>
+              {% endif %}
+              {% else %}
+              <div class="empty-state" style="padding:48px 24px;">
+                <div class="empty-state-icon">🩹</div>
+                <div class="empty-state-title">Patch not yet generated</div>
+                <div style="font-size:.78rem;color:var(--gray-500);margin-top:4px;text-align:center;">The patch file is generated automatically once the proposed fix passes quality review — before approval, so you can test the changes first.</div>
+              </div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+
+      </div>
+      <!-- /Artifacts panel -->
+
+      <!-- Error (original error details) -->
+      <div data-panel="error" hidden>
+        <div style="background:#fff;border:1px solid var(--gray-200);border-radius:14px;overflow:hidden;box-shadow:var(--shadow-sm);">
+          <div style="padding:12px 16px;border-bottom:1px solid var(--gray-200);background:#fff7f7;">
+            <div style="font-size:.87rem;font-weight:600;color:var(--gray-800);">Original Error</div>
+            <div style="font-size:.73rem;color:var(--gray-500);margin-top:1px;">Raw error signal that triggered this incident — as received from the telemetry stream.</div>
+          </div>
+          <div style="padding:16px;display:flex;flex-direction:column;gap:14px;">
+            {% if inc.error_title %}
+            <div>
+              <div style="font-size:.72rem;font-weight:700;color:var(--gray-400);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Error Title</div>
+              <div style="font-size:.85rem;font-weight:600;color:#dc2626;word-break:break-word;">{{ inc.error_title }}</div>
+            </div>
+            {% endif %}
+            {% if inc.error_description %}
+            <div>
+              <div style="font-size:.72rem;font-weight:700;color:var(--gray-400);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Error Description</div>
+              <pre style="background:var(--gray-900);color:#e2e8f0;border-radius:8px;padding:12px 14px;font-size:.76rem;line-height:1.6;overflow-x:auto;white-space:pre-wrap;word-break:break-word;margin:0;">{{ inc.error_description }}</pre>
+            </div>
+            {% endif %}
+            {% if inc.stack_trace %}
+            <div>
+              <div style="font-size:.72rem;font-weight:700;color:var(--gray-400);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Stack Trace</div>
+              <pre style="background:var(--gray-900);color:#fca5a5;border-radius:8px;padding:12px 14px;font-size:.75rem;line-height:1.6;overflow-x:auto;white-space:pre-wrap;word-break:break-word;margin:0;">{{ inc.stack_trace }}</pre>
+            </div>
+            {% endif %}
+            {% if inc.raw_log %}
+            <div>
+              <div style="font-size:.72rem;font-weight:700;color:var(--gray-400);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Raw Log</div>
+              <pre style="background:var(--gray-900);color:#e2e8f0;border-radius:8px;padding:12px 14px;font-size:.75rem;line-height:1.6;overflow-x:auto;white-space:pre-wrap;word-break:break-word;margin:0;">{{ inc.raw_log }}</pre>
+            </div>
+            {% endif %}
+            {% if inc.error_message %}
+            <div>
+              <div style="font-size:.72rem;font-weight:700;color:var(--gray-400);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Workflow Error</div>
+              <pre style="background:var(--gray-900);color:#fcd34d;border-radius:8px;padding:12px 14px;font-size:.76rem;line-height:1.6;overflow-x:auto;white-space:pre-wrap;word-break:break-word;margin:0;">{{ inc.error_message }}</pre>
+            </div>
+            {% endif %}
+            {% if not inc.error_description and not inc.stack_trace and not inc.raw_log and not inc.error_message %}
+            <div class="empty-state" style="padding:32px 24px;">
+              <div class="empty-state-icon">🔴</div>
+              <div class="empty-state-title">No error details available</div>
+            </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <!-- Audit Trail -->
+      <div data-panel="timeline" hidden>
+        {% if timeline_events %}
+        <div style="background:#fff;border:1px solid var(--gray-200);border-radius:14px;overflow:hidden;box-shadow:var(--shadow-sm);">
+          <div style="padding:12px 16px;border-bottom:1px solid var(--gray-200);background:var(--gray-50);display:flex;align-items:center;justify-content:space-between;gap:10px;">
+            <div>
+              <div style="font-size:.87rem;font-weight:600;color:var(--gray-800);">Cross-System Audit Trail</div>
+              <div style="font-size:.73rem;color:var(--gray-500);margin-top:1px;">Workflow, notifications, tickets, and code delivery events.</div>
+            </div>
+            <span class="badge badge-info">{{ timeline_events|length }} events</span>
+          </div>
+          <div style="padding:16px;display:flex;flex-direction:column;gap:0;">
+            {% for item in timeline_events %}
+            <div style="display:flex;gap:12px;padding-bottom:{% if not loop.last %}16px{% else %}0{% endif %};">
+              <div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;width:28px;">
+                <div style="width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:.72rem;font-weight:700;flex-shrink:0;border:2px solid {% if item.status == 'success' %}#6ee7b7{% elif item.status == 'error' %}#fca5a5{% else %}#fcd34d{% endif %};background:{% if item.status == 'success' %}#d1fae5{% elif item.status == 'error' %}#fee2e2{% else %}#fef3c7{% endif %};color:{% if item.status == 'success' %}#059669{% elif item.status == 'error' %}#dc2626{% else %}#d97706{% endif %};">
+                  {% if item.source == 'jira' %}J{% elif item.source in ('github','artifact') %}G{% elif item.source == 'slack' %}S{% elif item.source == 'teams' %}T{% else %}•{% endif %}
+                </div>
+                {% if not loop.last %}<div style="width:2px;flex:1;background:var(--gray-200);margin-top:3px;"></div>{% endif %}
+              </div>
+              <div style="flex:1;padding-bottom:4px;">
+                <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+                  <div>
+                    <div style="font-size:.83rem;font-weight:600;color:var(--gray-800);">{{ item.title }}</div>
+                    <div style="font-size:.75rem;color:var(--gray-500);margin-top:2px;">{{ item.details }}</div>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+                    <span class="badge badge-{{ 'success' if item.status == 'success' else 'error' if item.status == 'error' else 'warning' }}">{{ item.source }}</span>
+                    <span style="font-size:.68rem;color:var(--gray-400);">{{ item.timestamp }}</span>
+                  </div>
+                </div>
+                {% if item.preview %}
+                <pre style="margin-top:8px;background:var(--gray-900);color:#e5e7eb;border-radius:8px;padding:10px 12px;font-size:.73rem;overflow:auto;white-space:pre-wrap;">{{ item.preview }}</pre>
+                {% endif %}
+                {% if item.url %}
+                <div style="margin-top:6px;"><a href="{{ item.url }}" {% if item.url.startswith('http') %}target="_blank"{% endif %} class="link" style="font-size:.75rem;">Open resource ↗</a></div>
+                {% endif %}
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        {% else %}
+        <div class="empty-state"><div class="empty-state-icon">🕒</div><div class="empty-state-title">Audit trail not available</div></div>
+        {% endif %}
+      </div>
+
+      <!-- Diff (standalone) -->
+      {% if diff_rows %}
+      <div data-panel="diff" hidden>
+        <div style="background:#fff;border:1px solid var(--gray-200);border-radius:14px;overflow:hidden;box-shadow:var(--shadow-sm);">
+          <div style="padding:12px 16px;border-bottom:1px solid var(--gray-200);background:var(--gray-50);">
+            <div style="font-size:.87rem;font-weight:600;color:var(--gray-800);">Patch Diff</div>
+            <div style="font-size:.73rem;color:var(--gray-500);margin-top:1px;">Line-level source changes generated for this incident.</div>
+          </div>
+          <div class="diff-viewer" style="border-radius:0;overflow:auto;">
+            <table class="diff-table"><tbody>
+              {% for old_ln, new_ln, sign, text in diff_rows %}
+              <tr class="diff-row diff-row--{{ 'add' if sign == '+' else 'del' }}">
+                <td class="diff-ln">{{ old_ln or '' }}</td>
+                <td class="diff-ln">{{ new_ln or '' }}</td>
+                <td class="diff-sign">{{ sign }}</td>
+                <td class="diff-code"><code>{{ text }}</code></td>
+              </tr>
+              {% endfor %}
+            </tbody></table>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+
+      <!-- Metadata -->
+      <div data-panel="meta" hidden>
+        <div style="background:#fff;border:1px solid var(--gray-200);border-radius:14px;overflow:hidden;box-shadow:var(--shadow-sm);">
+          <div style="padding:12px 16px;border-bottom:1px solid var(--gray-200);background:var(--gray-50);">
+            <div style="font-size:.87rem;font-weight:600;color:var(--gray-800);">Incident Details</div>
+            <div style="font-size:.73rem;color:var(--gray-500);margin-top:1px;">Operational and delivery metadata for this incident.</div>
+          </div>
+          <div style="padding:16px;">
+            <dl class="kv-list">
+              {% set mf = [
+                ('Incident ID', inc.incident_id),('App Name', inc.app_name),('Severity', inc.severity),
+                ('Status', inc.status),('Approval Status', inc.approval_status),('Repo', inc.repo_full_name),
+                ('Branch', inc.fix_branch),('PR URL', inc.pr_url),('Jira Ticket', inc.jira_ticket_url),
+                ('Commit SHA', inc.commit_sha),('Commit URL', inc.commit_url),('Error File', inc.error_file_path),
+                ('Error Line', inc.error_line_number),('Created At', inc.created_at | fmt_dt),
+                ('Updated At', inc.updated_at | fmt_dt),('Approved At', inc.approved_at | fmt_dt),
+                ('Approval Notes', inc.approval_notes),('Occurrences', inc.occurrence_count),
+                ('Error Type', inc.error_type),('Environment', inc.environment),
+              ] %}
+              {% for label, value in mf %}{% if value %}
+              <div class="kv-row">
+                <dt class="kv-key">{{ label }}</dt>
+                <dd class="kv-value">
+                  {% if (value | string).startswith('http') %}<a href="{{ value }}" target="_blank" class="link">{{ value }}</a>{% else %}{{ value }}{% endif %}
+                </dd>
+              </div>
+              {% endif %}{% endfor %}
+            </dl>
+          </div>
+        </div>
+        {% if inc.error_message %}
+        <div style="background:#fff;border:1px solid var(--gray-200);border-radius:14px;overflow:hidden;box-shadow:var(--shadow-sm);margin-top:14px;">
+          <div style="padding:12px 16px;border-bottom:1px solid var(--gray-200);background:var(--gray-50);font-size:.87rem;font-weight:600;color:var(--gray-800);">Error Message</div>
+          <div style="padding:16px;"><pre style="background:var(--gray-900);color:#e2e8f0;border-radius:8px;padding:12px 14px;font-size:.76rem;line-height:1.6;overflow-x:auto;white-space:pre-wrap;word-break:break-word;">{{ inc.error_message }}</pre></div>
+        </div>
+        {% endif %}
+        {% if inc.stack_trace %}
+        <div style="background:#fff;border:1px solid var(--gray-200);border-radius:14px;overflow:hidden;box-shadow:var(--shadow-sm);margin-top:14px;">
+          <div style="padding:12px 16px;border-bottom:1px solid var(--gray-200);background:var(--gray-50);font-size:.87rem;font-weight:600;color:var(--gray-800);">Stack Trace</div>
+          <div style="padding:16px;"><pre style="background:var(--gray-900);color:#e2e8f0;border-radius:8px;padding:12px 14px;font-size:.76rem;line-height:1.6;overflow-x:auto;white-space:pre-wrap;word-break:break-word;">{{ inc.stack_trace }}</pre></div>
+        </div>
+        {% endif %}
+        {% if inc.fetched_code %}
+        <div style="background:#fff;border:1px solid var(--gray-200);border-radius:14px;overflow:hidden;box-shadow:var(--shadow-sm);margin-top:14px;">
+          <div style="padding:12px 16px;border-bottom:1px solid var(--gray-200);background:var(--gray-50);display:flex;align-items:center;justify-content:space-between;gap:10px;">
+            <div style="font-size:.87rem;font-weight:600;color:var(--gray-800);">Fetched Code Context</div>
+            <span class="badge badge-info">Used by RCA</span>
+          </div>
+          <div style="padding:16px;"><pre style="background:var(--gray-900);color:#e2e8f0;border-radius:8px;padding:12px 14px;font-size:.76rem;line-height:1.6;overflow-x:auto;white-space:pre-wrap;word-break:break-word;">{{ inc.fetched_code }}</pre></div>
+        </div>
+        {% endif %}
+      </div>
+
+      <!-- Comments Thread -->
+      <div data-panel="comments" hidden>
+        <div style="background:#fff;border:1px solid var(--gray-200);border-radius:14px;overflow:hidden;box-shadow:var(--shadow-sm);">
+          <div style="padding:12px 16px;border-bottom:1px solid var(--gray-200);background:var(--gray-50);display:flex;align-items:center;justify-content:space-between;gap:10px;">
+            <div><div style="font-size:.87rem;font-weight:600;color:var(--gray-800);">Team Comments</div><div style="font-size:.73rem;color:var(--gray-500);margin-top:1px;">Discussion thread for this incident.</div></div>
+            <span class="badge badge-info" id="commentCountBadge">…</span>
+          </div>
+          <div style="padding:16px;display:flex;flex-direction:column;gap:10px;min-height:80px;" id="commentsList">
+            <div style="text-align:center;padding:16px;color:var(--gray-400);font-size:.82rem;">Loading comments…</div>
+          </div>
+          <div style="padding:14px;border-top:1px solid var(--gray-200);background:var(--gray-50);">
+            <div style="display:flex;gap:10px;align-items:flex-start;">
+              <textarea id="newCommentText" class="input" rows="2" placeholder="Add a comment…" style="flex:1;resize:vertical;min-height:52px;"></textarea>
+              <button class="btn btn-primary btn-sm" id="postCommentBtn" style="flex-shrink:0;margin-top:2px;">Post</button>
+            </div>
+            <div id="commentError" style="font-size:.74rem;color:#dc2626;margin-top:4px;display:none;"></div>
+          </div>
+        </div>
+        {% if inc.approval_status == 'rejected' %}
+        <div style="margin-top:14px;background:#fff;border:1px solid #fecaca;border-radius:14px;overflow:hidden;box-shadow:var(--shadow-sm);">
+          <div style="padding:12px 16px;border-bottom:1px solid #fecaca;background:#fff7f7;">
+            <div style="font-size:.87rem;font-weight:600;color:var(--gray-800);">Re-generate Fix with Feedback</div>
+            <div style="font-size:.73rem;color:var(--gray-600);margin-top:1px;">The fix was rejected. Provide reviewer feedback to guide the next generation attempt.</div>
+          </div>
+          <div style="padding:16px;display:flex;flex-direction:column;gap:12px;">
+            <textarea id="regenFeedback" class="input" rows="3" placeholder="Describe what was wrong and what the fix should do differently…" style="resize:vertical;">{{ inc.approval_notes or '' }}</textarea>
+            <div><button class="btn btn-primary" id="regenFixBtn">🔄 Re-generate Fix with Feedback</button></div>
+          </div>
+        </div>
+        {% endif %}
+      </div>
+
+      <!-- Approval -->
+      {% if inc.status == 'PENDING_APPROVAL' or inc.approval_status == 'pending' %}
+      <div data-panel="approval" hidden>
+        <div style="background:#fff;border:1px solid var(--gray-200);border-radius:14px;overflow:hidden;box-shadow:var(--shadow-sm);">
+          <div style="padding:12px 16px;border-bottom:1px solid var(--gray-200);background:#fef9c3;">
+            <div style="font-size:.87rem;font-weight:600;color:var(--gray-800);">Review Fix & Approve</div>
+            <div style="font-size:.73rem;color:var(--gray-600);margin-top:1px;">Approving resumes downstream automation. Rejecting halts the workflow and records the decision.</div>
+          </div>
+          <div style="padding:18px;display:flex;flex-direction:column;gap:14px;">
+            <div style="display:flex;flex-direction:column;gap:4px;">
+              <label style="font-size:.78rem;font-weight:600;color:var(--gray-700);" for="approvalNotes">Notes (optional)</label>
+              <textarea id="approvalNotes" name="notes" class="input" rows="4" placeholder="Add review notes…" style="resize:vertical;"></textarea>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+              <button type="button" class="btn btn-success" id="approveBtn" data-action="approve" data-incident="{{ inc.incident_id }}">✓ Approve Fix</button>
+              <button type="button" class="btn btn-danger" id="rejectBtn" data-action="reject" data-incident="{{ inc.incident_id }}">✕ Reject</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+
     </div>
+    <!-- /Main column -->
+
+    <!-- Sidebar -->
+    <div style="display:flex;flex-direction:column;gap:14px;">
+
+      <!-- Artifacts sidebar -->
+      <div style="background:#fff;border:1px solid var(--gray-200);border-radius:14px;overflow:hidden;box-shadow:var(--shadow-sm);">
+        <div style="padding:12px 16px;border-bottom:1px solid var(--gray-200);background:var(--gray-50);">
+          <div style="font-size:.87rem;font-weight:600;color:var(--gray-800);">Artifacts</div>
+          <div style="font-size:.73rem;color:var(--gray-500);margin-top:1px;">Deliverables tied to the current workflow state.</div>
+        </div>
+        <div style="padding:14px;display:flex;flex-direction:column;gap:10px;">
+          <div style="padding:12px;border:1px solid var(--gray-200);border-radius:12px;background:var(--gray-50);display:flex;align-items:center;justify-content:space-between;gap:10px;">
+            <div>
+              <div style="font-size:.82rem;font-weight:700;color:var(--gray-800);">RCA Report (PDF)</div>
+              <div style="font-size:.72rem;color:var(--gray-500);margin-top:2px;">{% if pdf_artifact %}{{ pdf_artifact.name }}{% else %}Not available yet{% endif %}</div>
+            </div>
+            <div style="display:flex;gap:6px;flex-shrink:0;">
+              {% if pdf_artifact %}
+              <a href="{{ pdf_artifact.preview_url }}" target="_blank" class="btn btn-ghost btn-sm">Preview</a>
+              <a href="{{ pdf_artifact.download_url }}" class="btn btn-secondary btn-sm">Download</a>
+              {% else %}
+              <span class="badge badge-warning">Pending</span>
+              {% endif %}
+            </div>
+          </div>
+          <div style="padding:12px;border:1px solid var(--gray-200);border-radius:12px;background:var(--gray-50);display:flex;align-items:center;justify-content:space-between;gap:10px;">
+            <div>
+              <div style="font-size:.82rem;font-weight:700;color:var(--gray-800);">Fix Patch</div>
+              <div style="font-size:.72rem;color:var(--gray-500);margin-top:2px;">{% if patch_artifact %}{{ patch_artifact.name }}{% else %}Not available yet{% endif %}</div>
+            </div>
+            <div style="flex-shrink:0;">
+              {% if patch_artifact %}
+              <a href="{{ patch_artifact.download_url }}" class="btn btn-secondary btn-sm">Download</a>
+              {% else %}
+              <span class="badge badge-warning">Pending</span>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Relevant links -->
+      {% if incident_links %}
+      <div style="background:#fff;border:1px solid var(--gray-200);border-radius:14px;overflow:hidden;box-shadow:var(--shadow-sm);">
+        <div style="padding:12px 16px;border-bottom:1px solid var(--gray-200);background:var(--gray-50);">
+          <div style="font-size:.87rem;font-weight:600;color:var(--gray-800);">Relevant Links</div>
+          <div style="font-size:.73rem;color:var(--gray-500);margin-top:1px;">Jump to related engineering and tracking systems.</div>
+        </div>
+        <div style="padding:12px;display:flex;flex-direction:column;gap:6px;">
+          {% for link in incident_links %}
+          <a href="{{ link.url }}" {% if link.url.startswith('http') %}target="_blank"{% endif %}
+            style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;border:1px solid var(--gray-200);border-radius:10px;background:var(--gray-50);color:var(--gray-800);text-decoration:none;font-size:.8rem;"
+            onmouseover="this.style.borderColor='#d8b4fe';this.style.background='#faf5ff';"
+            onmouseout="this.style.borderColor='var(--gray-200)';this.style.background='var(--gray-50)';">
+            <span>{{ link.label }}</span>
+            <span class="badge badge-info">{{ link.kind }}</span>
+          </a>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      <!-- Delivery status: Jira + Notifications -->
+      <div style="background:#fff;border:1px solid var(--gray-200);border-radius:14px;overflow:hidden;box-shadow:var(--shadow-sm);">
+        <div style="padding:12px 16px;border-bottom:1px solid var(--gray-200);background:var(--gray-50);">
+          <div style="font-size:.87rem;font-weight:600;color:var(--gray-800);">Delivery Status</div>
+          <div style="font-size:.73rem;color:var(--gray-500);margin-top:1px;">Jira, Slack, Teams, and PR delivery outcomes.</div>
+        </div>
+        <div style="padding:12px;display:flex;flex-direction:column;gap:8px;">
+
+          <!-- Jira -->
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-radius:10px;border:1px solid {% if inc.jira_ticket_url %}#bbf7d0{% elif inc.jira_error %}#fecaca{% else %}var(--gray-200){% endif %};background:{% if inc.jira_ticket_url %}#f0fdf4{% elif inc.jira_error %}#fef2f2{% else %}var(--gray-50){% endif %};">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="font-size:1rem;">🎫</span>
+              <div>
+                <div style="font-size:.8rem;font-weight:700;color:var(--gray-800);">Jira</div>
+                <div style="font-size:.72rem;color:var(--gray-500);">
+                  {% if inc.jira_ticket_url %}{{ inc.jira_ticket_key or 'Ticket created' }}
+                  {% elif inc.jira_error %}{{ inc.jira_error | truncate(40) }}
+                  {% else %}Pending{% endif %}
+                </div>
+              </div>
+            </div>
+            {% if inc.jira_ticket_url %}
+            <a href="{{ inc.jira_ticket_url }}" target="_blank" class="btn btn-ghost btn-sm">Open ↗</a>
+            {% elif inc.jira_error %}
+            <span class="badge badge-error">Failed</span>
+            {% else %}
+            <span class="badge badge-warning">Pending</span>
+            {% endif %}
+          </div>
+
+          <!-- Slack -->
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-radius:10px;border:1px solid {% if inc.slack_notification_sent %}#bbf7d0{% else %}var(--gray-200){% endif %};background:{% if inc.slack_notification_sent %}#f0fdf4{% else %}var(--gray-50){% endif %};">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="font-size:1rem;">💬</span>
+              <div>
+                <div style="font-size:.8rem;font-weight:700;color:var(--gray-800);">Slack</div>
+                <div style="font-size:.72rem;color:var(--gray-500);">{% if inc.slack_notification_sent %}Notification sent{% else %}Pending{% endif %}</div>
+              </div>
+            </div>
+            {% if inc.slack_notification_sent %}
+            <span class="badge badge-success">Sent</span>
+            {% else %}
+            <span class="badge badge-warning">Pending</span>
+            {% endif %}
+          </div>
+
+          <!-- Teams — only shown when Teams is configured for this project or was actually sent -->
+          {% if inc.teams_notification_sent or teams_configured %}
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-radius:10px;border:1px solid {% if inc.teams_notification_sent %}#bbf7d0{% else %}var(--gray-200){% endif %};background:{% if inc.teams_notification_sent %}#f0fdf4{% else %}var(--gray-50){% endif %};">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="font-size:1rem;">🪟</span>
+              <div>
+                <div style="font-size:.8rem;font-weight:700;color:var(--gray-800);">Teams</div>
+                <div style="font-size:.72rem;color:var(--gray-500);">{% if inc.teams_notification_sent %}Notification sent{% else %}Pending{% endif %}</div>
+              </div>
+            </div>
+            {% if inc.teams_notification_sent %}
+            <span class="badge badge-success">Sent</span>
+            {% else %}
+            <span class="badge badge-warning">Pending</span>
+            {% endif %}
+          </div>
+          {% endif %}
+
+          <!-- PR -->
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-radius:10px;border:1px solid {% if inc.pr_url %}#bbf7d0{% else %}var(--gray-200){% endif %};background:{% if inc.pr_url %}#f0fdf4{% else %}var(--gray-50){% endif %};">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="font-size:1rem;">🐙</span>
+              <div>
+                <div style="font-size:.8rem;font-weight:700;color:var(--gray-800);">Pull Request</div>
+                <div style="font-size:.72rem;color:var(--gray-500);">
+                  {% if inc.pr_url %}PR #{{ inc.pr_number or '—' }} · {{ inc.fix_branch or '' }}
+                  {% else %}Pending{% endif %}
+                </div>
+              </div>
+            </div>
+            {% if inc.pr_url %}
+            <a href="{{ inc.pr_url }}" target="_blank" class="btn btn-success btn-sm">Open ↗</a>
+            {% else %}
+            <span class="badge badge-warning">Pending</span>
+            {% endif %}
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Workflow improvements -->
+      <div style="background:#fff;border:1px solid var(--gray-200);border-radius:14px;overflow:hidden;box-shadow:var(--shadow-sm);">
+        <div style="padding:12px 16px;border-bottom:1px solid var(--gray-200);background:var(--gray-50);">
+          <div style="font-size:.87rem;font-weight:600;color:var(--gray-800);">Suggested Improvements</div>
+          <div style="font-size:.73rem;color:var(--gray-500);margin-top:1px;">Next steps to improve reliability and visibility.</div>
+        </div>
+        <div style="padding:14px;">
+          <ul style="display:flex;flex-direction:column;gap:8px;padding-left:18px;margin:0;color:var(--gray-700);">
+            {% for item in workflow_improvements %}
+            <li style="font-size:.8rem;line-height:1.55;">{{ item }}</li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+
+    </div>
+    <!-- /Sidebar -->
+
   </div>
 </div>
-{% endif %}
-
 {% endblock %}
 
 {% block extra_js %}
 <script>
-  // Live workflow polling for in-progress incidents
-  (function() {
-    const TERMINAL = ['COMPLETED','PR_CREATED','REJECTED','FAILED'];
-    const status = {{ (inc.status or '') | tojson }};
-    if (!TERMINAL.includes(status)) {
-      window.prism.startPolling(
-        '/api/incidents/{{ inc.incident_id }}',
-        8000,
-        function(data) {
-          // update badges
-          const st = (data.status || '').replace(/_/g,' ');
-          document.querySelectorAll('[data-status-badge]').forEach(el => el.textContent = st);
-          if (TERMINAL.includes(data.status)) {
-            window.prism.stopPolling();
-            window.prism.toast('Workflow complete: ' + st, 'success');
-          }
+(function () {
+  // Tab switching
+  var tabs = document.querySelectorAll('#detailTabs .tab');
+  tabs.forEach(function (tab) {
+    tab.addEventListener('click', function () {
+      tabs.forEach(function (t) { t.classList.remove('tab--active'); });
+      this.classList.add('tab--active');
+      var target = this.dataset.tab;
+      document.querySelectorAll('[data-panel]').forEach(function (panel) {
+        if (panel.dataset.panel === target) {
+          panel.removeAttribute('hidden');
+        } else {
+          panel.setAttribute('hidden', '');
         }
-      );
+      });
+    });
+  });
+
+  // Approval buttons
+  function doApproval(action) {
+    var notes = (document.getElementById('approvalNotes') || {}).value || '';
+    var incidentId = '{{ inc.incident_id }}';
+    var btn = action === 'approve' ? document.getElementById('approveBtn') : document.getElementById('rejectBtn');
+    if (btn) { btn.disabled = true; btn.textContent = action === 'approve' ? 'Approving…' : 'Rejecting…'; }
+    fetch('/api/incidents/' + incidentId + '/approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'action=' + encodeURIComponent(action) + '&notes=' + encodeURIComponent(notes)
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      if (d.ok) {
+        if (action === 'approve') {
+          // Trigger post-approval workflow: patch → notifications → Jira → PR → finalize
+          if (btn) { btn.textContent = 'Running workflow…'; }
+          fetch('/api/incidents/' + incidentId + '/continue-post-approval', { method: 'POST' })
+            .catch(function () { /* non-fatal — workflow may still run */ })
+            .finally(function () { window.location.reload(); });
+        } else {
+          window.location.reload();
+        }
+      } else {
+        if (btn) { btn.disabled = false; btn.textContent = action === 'approve' ? '✓ Approve Fix' : '✕ Reject'; }
+        alert('Action failed: ' + (d.detail || JSON.stringify(d)));
+      }
+    }).catch(function () {
+      if (btn) { btn.disabled = false; btn.textContent = action === 'approve' ? '✓ Approve Fix' : '✕ Reject'; }
+      alert('Request failed.');
+    });
+  }
+  var approveBtn = document.getElementById('approveBtn');
+  var rejectBtn = document.getElementById('rejectBtn');
+  if (approveBtn) approveBtn.addEventListener('click', function () { doApproval('approve'); });
+  if (rejectBtn) rejectBtn.addEventListener('click', function () { doApproval('reject'); });
+
+  // Re-trigger button
+  var triggerBtn = document.getElementById('triggerBtn');
+  if (triggerBtn) {
+    triggerBtn.addEventListener('click', function () {
+      var incidentId = this.dataset.incident;
+      this.disabled = true;
+      this.textContent = 'Triggering…';
+      fetch('/api/incidents/' + incidentId + '/trigger', { method: 'POST' })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (d.ok) { setTimeout(function () { window.location.reload(); }, 1500); }
+          else { alert('Trigger failed: ' + (d.detail || JSON.stringify(d))); triggerBtn.disabled = false; triggerBtn.textContent = '⚡ Re-trigger'; }
+        }).catch(function () { alert('Trigger request failed.'); triggerBtn.disabled = false; triggerBtn.textContent = '⚡ Re-trigger'; });
+    });
+  }
+  // Artifact sub-tab switching
+  var artifactSubTabs = document.querySelectorAll('#artifactSubTabs .tab');
+  artifactSubTabs.forEach(function (tab) {
+    tab.addEventListener('click', function () {
+      artifactSubTabs.forEach(function (t) { t.classList.remove('tab--active'); });
+      this.classList.add('tab--active');
+      var target = this.dataset.artifactTab;
+      document.querySelectorAll('[data-artifact-panel]').forEach(function (panel) {
+        if (panel.dataset.artifactPanel === target) {
+          panel.removeAttribute('hidden');
+        } else {
+          panel.setAttribute('hidden', '');
+        }
+      });
+    });
+  });
+
+  // ── Comments tab — lazy-load on first click ───────────────────────────────
+  var commentsLoaded = false;
+  var incidentId = '{{ inc.incident_id }}';
+
+  function renderComments(comments) {
+    var list = document.getElementById('commentsList');
+    var badge = document.getElementById('commentCountBadge');
+    if (!list) return;
+    if (badge) badge.textContent = comments.length + ' comment' + (comments.length !== 1 ? 's' : '');
+    if (!comments.length) {
+      list.innerHTML = '<div style="text-align:center;padding:20px;color:var(--gray-400);font-size:.82rem;">No comments yet. Be the first to add one.</div>';
+      return;
     }
-  })();
+    list.innerHTML = comments.map(function (c) {
+      return '<div style="padding:12px;border:1px solid var(--gray-200);border-radius:12px;background:var(--gray-50);">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">' +
+        '<span style="font-size:.78rem;font-weight:700;color:var(--gray-800);">@' + (c.author || 'user') + '</span>' +
+        '<span style="font-size:.68rem;color:var(--gray-400);">' + (c.created_at || '').replace('T', ' ').slice(0, 16) + '</span>' +
+        '</div>' +
+        '<div style="font-size:.82rem;color:var(--gray-700);line-height:1.6;white-space:pre-wrap;">' + (c.content || '') + '</div>' +
+        '</div>';
+    }).join('');
+  }
+
+  function loadComments() {
+    fetch('/api/incidents/' + incidentId + '/comments')
+      .then(function (r) { return r.json(); })
+      .then(function (d) { renderComments(d.comments || []); commentsLoaded = true; })
+      .catch(function () {
+        var list = document.getElementById('commentsList');
+        if (list) list.innerHTML = '<div style="text-align:center;padding:16px;color:#dc2626;font-size:.82rem;">Failed to load comments.</div>';
+      });
+  }
+
+  // Trigger comments load when tab is clicked
+  document.querySelectorAll('[data-tab="comments"]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      if (!commentsLoaded) loadComments();
+    });
+  });
+
+  // Post comment
+  var postBtn = document.getElementById('postCommentBtn');
+  if (postBtn) {
+    postBtn.addEventListener('click', async function () {
+      var text = (document.getElementById('newCommentText') || {}).value || '';
+      var errEl = document.getElementById('commentError');
+      if (!text.trim()) {
+        if (errEl) { errEl.textContent = 'Comment cannot be empty.'; errEl.style.display = ''; }
+        return;
+      }
+      if (errEl) errEl.style.display = 'none';
+      postBtn.disabled = true; postBtn.textContent = 'Posting…';
+      try {
+        const r = await fetch('/api/incidents/' + incidentId + '/comments', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: text.trim() })
+        });
+        const d = await r.json();
+        if (r.ok) {
+          document.getElementById('newCommentText').value = '';
+          loadComments();
+        } else {
+          if (errEl) { errEl.textContent = d.error || 'Failed to post comment.'; errEl.style.display = ''; }
+        }
+      } catch (e) {
+        if (errEl) { errEl.textContent = 'Network error: ' + e.message; errEl.style.display = ''; }
+      }
+      postBtn.disabled = false; postBtn.textContent = 'Post';
+    });
+  }
+
+  // ── Re-generate fix ───────────────────────────────────────────────────────
+  var regenBtn = document.getElementById('regenFixBtn');
+  if (regenBtn) {
+    regenBtn.addEventListener('click', async function () {
+      var feedback = (document.getElementById('regenFeedback') || {}).value || '';
+      if (!confirm('Re-generate the fix with this feedback? The current fix will be cleared and a new one generated.')) return;
+      regenBtn.disabled = true; regenBtn.textContent = 'Starting re-generation…';
+      try {
+        const r = await fetch('/api/incidents/' + incidentId + '/regenerate-fix', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ feedback: feedback })
+        });
+        const d = await r.json();
+        if (r.ok) {
+          alert('Re-generation started. The page will refresh in a moment.');
+          setTimeout(function () { window.location.reload(); }, 2000);
+        } else {
+          alert('Error: ' + (d.error || d.detail || 'Re-generation failed'));
+          regenBtn.disabled = false; regenBtn.textContent = '🔄 Re-generate Fix with Feedback';
+        }
+      } catch (e) {
+        alert('Network error: ' + e.message);
+        regenBtn.disabled = false; regenBtn.textContent = '🔄 Re-generate Fix with Feedback';
+      }
+    });
+  }
+
+})();
 </script>
 {% endblock %}

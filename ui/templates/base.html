@@ -78,14 +78,14 @@
       line-height: 1;
     }
     .topbar-integration-pill--online {
-      border-color: rgba(34,197,94,.28);
-      background: rgba(34,197,94,.10);
-      color: #166534;
+      border-color: #14532d;
+      background: #166534;
+      color: #f0fdf4;
     }
     .topbar-integration-pill--offline {
-      border-color: rgba(148,163,184,.24);
-      background: rgba(148,163,184,.08);
-      color: #64748b;
+      border-color: #7f1d1d;
+      background: #991b1b;
+      color: #fef2f2;
     }
     .topbar-integration-pill__icon {
       font-size: 0.8rem;
@@ -114,36 +114,8 @@
 
   <div class="topbar-actions">
     {% block topbar_actions %}
-    {% if current_user and current_user.role == 'user' %}
-    <span class="topbar-status" id="apiStatus" title="Ingestion API status">
-      <span class="status-dot {% if api_online is defined and api_online %}status-dot--online{% else %}status-dot--offline{% endif %}"></span>
-      <span class="status-label">{% if api_online is defined and api_online %}API Online{% else %}API Offline{% endif %}</span>
-    </span>
-    {% set integration_meta = [
-      ('llm', '🤖', 'LLM'),
-      ('jira', '🎫', 'Jira'),
-      ('github', '🐙', 'GitHub'),
-      ('anypoint', '☁️', 'Anypoint'),
-      ('slack', '💬', 'Slack'),
-      ('teams', '🪟', 'Teams')
-    ] %}
-    {% if integration_status is defined and integration_status %}
-    <div class="topbar-integrations" aria-label="Project integrations">
-      {% for key, icon, label in integration_meta %}
-      <span class="topbar-integration-pill {% if integration_status.get(key) %}topbar-integration-pill--online{% else %}topbar-integration-pill--offline{% endif %}" title="{{ label }} {% if integration_status.get(key) %}connected{% else %}not configured{% endif %}">
-        <span class="topbar-integration-pill__icon">{{ icon }}</span>
-        <span class="topbar-integration-pill__label">{{ label }}</span>
-      </span>
-      {% endfor %}
-    </div>
-    {% endif %}
-    {% if selected_project is defined and selected_project %}
-    <span class="topbar-integration-pill topbar-integration-pill--online" title="Active project">
-      <span class="topbar-integration-pill__icon">📦</span>
-      <span class="topbar-integration-pill__label">{{ selected_project.name }}</span>
-    </span>
-    {% endif %}
-    <button class="btn btn-ghost btn-sm" id="refreshBtn" title="Refresh data">↻ Refresh</button>
+    {% if current_user %}
+    <button class="btn btn-ghost btn-sm" id="refreshBtn" type="button" title="Refresh data">↻ Refresh</button>
     {% endif %}
     {% if current_user %}
       {% if _role == 'admin' %}

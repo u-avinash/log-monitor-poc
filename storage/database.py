@@ -46,10 +46,10 @@ class TelemetryLog(Base):
 class Incident(Base):
     """SQLAlchemy model for incidents table."""
     __tablename__ = "incidents"
-    
+
     # Primary key (4-character alphanumeric ID, e.g., A7CB)
     incident_id = Column(String(4), primary_key=True, nullable=False)
-    
+
     # Basic info
     app_name = Column(String(255), nullable=False, index=True)
     environment = Column(String(50), nullable=False, index=True)
@@ -57,45 +57,45 @@ class Incident(Base):
     error_description = Column(Text, nullable=False)
     stack_trace = Column(Text, nullable=False)
     raw_log = Column(Text, nullable=False)
-    
+
     # Error detection
     error_fingerprint = Column(String(64), nullable=True, index=True)
     is_duplicate = Column(Boolean, default=False)
     existing_incident_id = Column(String(4), nullable=True)
-    occurrence_count = Column(Integer, default=1, nullable=False)  # Track duplicate occurrences
-    last_occurrence_at = Column(DateTime, default=datetime.utcnow, nullable=True)  # Last time this error occurred
-    
+    occurrence_count = Column(Integer, default=1, nullable=False)
+    last_occurrence_at = Column(DateTime, default=datetime.utcnow, nullable=True)
+
     # Status and severity
     status = Column(String(50), nullable=False, default="DETECTED", index=True)
     severity = Column(String(20), nullable=True, index=True)
-    
+
     # Workflow tracking
     current_workflow_node = Column(String(100), nullable=True)
     workflow_completed_steps = Column(JSON, nullable=True)
     workflow_progress_pct = Column(Float, nullable=True)
-    
+
     # RCA
     rca_text = Column(Text, nullable=True)
     rca_confidence = Column(Float, nullable=True)
     pdf_path = Column(String(500), nullable=True)
-    
+
     # Alerting
     alert_sent = Column(Boolean, default=False)
     alert_channels = Column(JSON, nullable=True)
-    
+
     # Notification status
     slack_notification_sent = Column(Boolean, default=False, nullable=True)
     teams_notification_sent = Column(Boolean, default=False, nullable=True)
     notification_errors = Column(JSON, nullable=True)
-    
+
     # Jira
     jira_ticket_key = Column(String(50), nullable=True, index=True)
     jira_ticket_url = Column(String(500), nullable=True)
     jira_error = Column(Text, nullable=True)
-    
+
     # Auto-fix decision
     should_auto_fix = Column(Boolean, default=False)
-    
+
     # Code fix
     proposed_fix = Column(Text, nullable=True)
     fix_explanation = Column(Text, nullable=True)
@@ -103,39 +103,52 @@ class Incident(Base):
     fix_quality_score = Column(Float, nullable=True)
     fix_approved = Column(Boolean, nullable=True)
     fix_approval_comment = Column(Text, nullable=True)
-    
-    # Approval tracking (NEW - for HIGH severity approval workflow)
-    approval_status = Column(String(20), nullable=True)  # 'approved', 'rejected', or None
+
+    # Approval tracking
+    approval_status = Column(String(20), nullable=True)
     approved_by = Column(String(255), nullable=True)
     approved_at = Column(DateTime, nullable=True)
     approval_notes = Column(Text, nullable=True)
-    
-    # GitHub metadata (for code fetching)
+
+    # GitHub metadata
     repo_full_name = Column(String(255), nullable=True)
     error_file_path = Column(String(500), nullable=True)
     error_line_number = Column(Integer, nullable=True)
     error_file_type = Column(String(50), nullable=True)
-    fetched_code = Column(Text, nullable=True)  # Original code from GitHub
-    
-    # OTLP metadata (store custom attributes and other telemetry data)
-    # Using incident_metadata instead of 'metadata' (reserved name in SQLAlchemy)
+    fetched_code = Column(Text, nullable=True)
+
+    # OTLP metadata
     incident_metadata = Column(JSON, nullable=True)
-    
+
     # Git operations
     repo_path = Column(String(500), nullable=True)
     fix_branch = Column(String(255), nullable=True)
     fix_committed = Column(Boolean, default=False)
-    
+
     # Pull request
     pr_number = Column(Integer, nullable=True)
     pr_url = Column(String(500), nullable=True)
     commit_sha = Column(String(255), nullable=True)
     commit_url = Column(String(500), nullable=True)
-    
+
     # Metadata
     processing_errors = Column(JSON, nullable=True)
     processing_duration_seconds = Column(Float, nullable=True)
     retries = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class IncidentComment(Base):
+    """SQLAlchemy model for incident comment threads."""
+
+    __tablename__ = "incident_comments"
+
+    comment_id = Column(String(16), primary_key=True, nullable=False)
+    incident_id = Column(String(4), nullable=False, index=True)
+    author = Column(String(255), nullable=False, default="user")
+    content = Column(Text, nullable=False)
+    comment_type = Column(String(20), nullable=False, default="comment")  # "comment" | "system"
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -154,6 +167,9 @@ class ProjectIntegrationConfig(Base):
     slack = Column(JSON, nullable=True)
     teams = Column(JSON, nullable=True)
     runtime = Column(JSON, nullable=True)
+    # repo_mappings: dict of app_name -> {repo, branch, description}
+    # No secret fields — stored as plain JSON
+    repo_mappings = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -163,7 +179,7 @@ def get_engine():
     database_url = f"sqlite:///{settings.database_path}"
     engine = create_engine(
         database_url,
-        connect_args={"check_same_thread": False},  # Needed for SQLite
+        connect_args={"check_same_thread": False},
         echo=settings.log_level == "DEBUG"
     )
     return engine
@@ -188,7 +204,7 @@ def get_db() -> Generator[Session, None, None]:
 def get_session():
     """Context manager to get database session."""
     from contextlib import contextmanager
-    
+
     @contextmanager
     def _session():
         SessionLocal = get_session_factory()
@@ -201,7 +217,7 @@ def get_session():
             raise
         finally:
             session.close()
-    
+
     return _session()
 
 
@@ -211,10 +227,24 @@ def init_database():
     engine = get_engine()
     Base.metadata.create_all(bind=engine)
 
+    # Run any necessary ALTER TABLE migrations for columns added after initial creation
     with engine.begin() as connection:
-        columns = [row[1] for row in connection.exec_driver_sql("PRAGMA table_info(project_integration_configs)").fetchall()]
+        columns = [
+            row[1]
+            for row in connection.exec_driver_sql(
+                "PRAGMA table_info(project_integration_configs)"
+            ).fetchall()
+        ]
         if "runtime" not in columns:
-            connection.exec_driver_sql("ALTER TABLE project_integration_configs ADD COLUMN runtime JSON")
+            connection.exec_driver_sql(
+                "ALTER TABLE project_integration_configs ADD COLUMN runtime JSON"
+            )
             logger.info("Added runtime column to project_integration_configs")
+
+        if "repo_mappings" not in columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE project_integration_configs ADD COLUMN repo_mappings JSON"
+            )
+            logger.info("Added repo_mappings column to project_integration_configs")
 
     logger.info("Database initialized successfully")

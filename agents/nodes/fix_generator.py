@@ -3,13 +3,19 @@ import logging
 from datetime import datetime
 import yaml
 import re
-from agents.state import AgentState
+from agents.state import AgentState, WORKFLOW_TOTAL_STEPS
 from integrations.llm_provider import LLMProvider
 from utils.code_fetcher import CodeFetcher
-from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
+
+
+def _trim_text(value: str | None, limit: int) -> str:
+    text = (value or "").strip()
+    if len(text) <= limit:
+        return text
+    half = max(1, limit // 2)
+    return f"{text[:half]}\n...\n{text[-half:]}"
 
 
 def generate_fix_node(state: AgentState) -> AgentState:
@@ -37,6 +43,7 @@ def generate_fix_node(state: AgentState) -> AgentState:
         error_line_number = state.get('error_line_number')
         error_file_type = state.get('error_file_type')
         repo_full_name = state.get('repo_full_name')
+        file_type_key = error_file_type or 'code'
         
         # Log metadata status
         logger.info(f"[Fix Generation] GitHub metadata from state:")
@@ -64,8 +71,8 @@ def generate_fix_node(state: AgentState) -> AgentState:
         else:
             logger.warning(f"[Fix Generation] ⚠️  GitHub metadata incomplete - some features may be limited")
         
-        # Fetch actual code from GitHub
-        code_fetcher = CodeFetcher()
+        # Fetch actual code from GitHub using project context
+        code_fetcher = CodeFetcher(project_id=state.get('project_id'))
         code_context = None
         
         # Load prompt template early (needed for both code fetch and fallback)
@@ -73,7 +80,13 @@ def generate_fix_node(state: AgentState) -> AgentState:
             prompts = yaml.safe_load(f)
         
         # Initialize LLM provider early (needed for both approaches)
-        llm_provider = LLMProvider()
+        llm_provider = LLMProvider(project_id=state.get('project_id'))
+        logger.info(
+            "[Fix Generation] Using LLM provider=%s model=%s project_id=%s",
+            llm_provider.provider,
+            llm_provider.model,
+            llm_provider.project_id,
+        )
         
         # Extract RCA summary early (needed for both approaches)
         rca_summary = state.get('rca_text', '')[:800] if state.get('rca_text') else 'No RCA available'
@@ -93,14 +106,33 @@ def generate_fix_node(state: AgentState) -> AgentState:
                     logger.warning(f"[Fix Generation] ✗ Code fetch returned None")
             except Exception as fetch_error:
                 logger.error(f"[Fix Generation] ✗ Code fetch failed: {fetch_error}")
+
+        # Fetch full MuleSoft project context (all flow XML + DWL scripts) for richer fix
+        project_files: dict = {}
+        if repo_full_name:
+            try:
+                project_files = code_fetcher.fetch_mulesoft_project_context(repo_full_name)
+                logger.info(f"[Fix Generation] ✓ Fetched {len(project_files)} MuleSoft project files")
+            except Exception as ctx_err:
+                logger.warning(f"[Fix Generation] Could not fetch project context: {ctx_err}")
         else:
             logger.warning(f"[Fix Generation] ✗ Missing GitHub metadata (repo={repo_full_name}, file={error_file_path})")
         
         if not code_context:
             logger.warning("[Fix Generation] Could not fetch code from GitHub, using fallback approach")
             # Generate fix based on error information alone
-            return _generate_fallback_fix(state, prompts, llm_provider, error_file_path, error_line_number, error_file_type, rca_summary)
+            return _generate_fallback_fix(
+                state,
+                prompts,
+                llm_provider,
+                error_file_path or '',
+                error_line_number or 0,
+                error_file_type or '',
+                rca_summary,
+            )
         
+        assert code_context is not None
+        code_context_data = code_context
         fix_prompt = prompts['code_fix_generation']
         
         # Determine file type specific instructions
@@ -111,8 +143,36 @@ def generate_fix_node(state: AgentState) -> AgentState:
             'java': "Fix the Java code. Ensure proper null checks and exception handling."
         }
         
-        specific_instruction = file_type_instructions.get(error_file_type, "Fix the code issue.")
+        specific_instruction = file_type_instructions.get(file_type_key, "Fix the code issue.")
         
+        full_code_for_storage = code_context_data["full_content"]
+        prompt_code_context = _trim_text(code_context_data["full_content"], 12000)
+        prompt_error_snippet = _trim_text(code_context_data.get("context_snippet", ""), 4000)
+
+        # Build project-wide context section for the prompt (other XML/DWL files)
+        project_context_section = ""
+        if project_files:
+            other_files = {
+                p: c for p, c in project_files.items()
+                if p != code_context_data.get("file_path")
+            }
+            if other_files:
+                parts = []
+                char_budget = 8000
+                for path, content in other_files.items():
+                    snippet = _trim_text(content, 1500)
+                    entry = f"### {path}\n```xml\n{snippet}\n```\n"
+                    if len('\n'.join(parts)) + len(entry) > char_budget:
+                        break
+                    parts.append(entry)
+                if parts:
+                    project_context_section = (
+                        "\n## Full MuleSoft Project Context\n"
+                        "The following files are part of the same MuleSoft project. "
+                        "Use them to understand the full flow before proposing the fix.\n\n"
+                        + "\n".join(parts)
+                    )
+
         # Format comprehensive prompt with actual code - TARGETED FIX APPROACH
         formatted_prompt = f"""{fix_prompt}
 
@@ -129,14 +189,15 @@ def generate_fix_node(state: AgentState) -> AgentState:
 **Repository:** {repo_full_name}
 **Full File Path:** {error_file_path}
 
-```{error_file_type}
-{code_context['full_content']}
+```{file_type_key}
+{prompt_code_context}
 ```
 
 ## Error Location (highlighted)
 ```
-{code_context.get('context_snippet', '')}
+{prompt_error_snippet}
 ```
+{project_context_section}
 
 ## Your Task
 {specific_instruction}
@@ -223,7 +284,7 @@ output application/json
 """
         
         # Generate fix
-        logger.info(f"[Fix Generation] Calling LLM ({settings.llm_provider})")
+        logger.info(f"[Fix Generation] Calling LLM ({llm_provider.provider})")
         fix_response = llm_provider.invoke(
             prompt=formatted_prompt,
             system_message="You are an expert software engineer specializing in Java, MuleSoft, and DataWeave. Generate safe, production-ready code fixes."
@@ -241,8 +302,8 @@ output application/json
             logger.warning(f"[Fix Generation] Safety concerns detected: {concerns}")
         
         # Store the original code in STATE for patch generation (critical!)
-        state['original_code'] = code_context['full_content']
-        logger.info(f"[Fix Generation] ✓ Stored original_code in STATE ({len(code_context['full_content'])} chars)")
+        state['original_code'] = full_code_for_storage
+        logger.info(f"[Fix Generation] ✓ Stored original_code in STATE ({len(full_code_for_storage)} chars)")
         
         # Also store in database for persistence
         try:
@@ -253,7 +314,7 @@ output application/json
                 repo_db = IncidentRepository(session)
                 repo_db.update(
                     incident_id=state['incident_id'],
-                    fetched_code=code_context['full_content']
+                    fetched_code=full_code_for_storage
                 )
             logger.info(f"[Fix Generation] ✓ Stored fetched_code in DATABASE")
         except Exception as db_error:
@@ -262,27 +323,43 @@ output application/json
         # Update state
         state['proposed_fix'] = proposed_fix
         state['fix_explanation'] = fix_explanation
-        state['affected_files'] = [error_file_path]  # Actual file that will be modified
+        state['affected_files'] = [error_file_path] if error_file_path else []
         state['current_node'] = 'generate_fix'
         state['updated_at'] = datetime.utcnow().isoformat()
         
         # Update workflow tracking
-        if 'workflow_completed_steps' not in state:
-            state['workflow_completed_steps'] = []
+        completed_steps = list(state.get('workflow_completed_steps') or [])
+        if 'generate_fix' not in completed_steps:
+            completed_steps.append('generate_fix')
+        state['workflow_completed_steps'] = completed_steps
         
-        # Add step only if not already completed (prevent duplicates)
-        if 'generate_fix' not in state['workflow_completed_steps']:
-            state['workflow_completed_steps'].append('generate_fix')
-        
-        # Calculate progress based on 11 total workflow steps
-        state['workflow_progress_pct'] = len(state['workflow_completed_steps']) / 11.0
-        
+        state['workflow_progress_pct'] = len(completed_steps) / WORKFLOW_TOTAL_STEPS
+
         messages = [f"✓ Code fix generated successfully"]
         if not safety_check:
             messages.append(f"⚠️ Safety concerns: {', '.join(concerns)}")
-        
+
         state['messages'] = state.get('messages', []) + messages
-        
+
+        # Send "Fix Generated" notification
+        try:
+            from agents.workflow import _send_event_notification
+            _send_event_notification(
+                event="Fix Generated",
+                incident_id=state['incident_id'],
+                severity=state.get('severity', 'HIGH'),
+                app_name=state.get('app_name', ''),
+                environment=state.get('environment', ''),
+                details=(
+                    f"Code fix generated for: {state.get('error_title', 'Unknown')}\n"
+                    f"File: {error_file_path or 'N/A'}\n"
+                    f"Explanation: {fix_explanation[:300]}{'...' if len(fix_explanation) > 300 else ''}"
+                ),
+                project_id=state.get('project_id'),
+            )
+        except Exception as _notify_err:
+            logger.warning("[Fix Generation] Could not send fix-generated notification: %s", _notify_err)
+
         # Update database with workflow progress
         try:
             from storage.database import get_session
@@ -305,11 +382,17 @@ output application/json
         
     except Exception as e:
         logger.error(f"[Fix Generation] Failed for {state['incident_id']}: {str(e)}")
-        state['error_message'] = f"Fix generation failed: {str(e)}"
+        error_text = str(e)
+        if "Missing API key for provider" in error_text:
+            error_text = (
+                f"{error_text} "
+                f"(incident={state['incident_id']}, app={state.get('app_name', 'unknown')}, project_id={state.get('project_id')})"
+            )
+        state['error_message'] = f"Fix generation failed: {error_text}"
         state['proposed_fix'] = None
-        state['fix_explanation'] = f"Error generating fix: {str(e)}"
+        state['fix_explanation'] = f"Error generating fix: {error_text}"
         state['messages'] = state.get('messages', []) + [
-            f"❌ Fix generation failed: {str(e)}"
+            f"❌ Fix generation failed: {error_text}"
         ]
         
         # Update workflow tracking even on failure
@@ -557,14 +640,13 @@ Since the actual code is not available, provide:
         state['updated_at'] = datetime.utcnow().isoformat()
         
         # Update workflow tracking
-        if 'workflow_completed_steps' not in state:
-            state['workflow_completed_steps'] = []
+        completed_steps = list(state.get('workflow_completed_steps') or [])
+        if 'generate_fix' not in completed_steps:
+            completed_steps.append('generate_fix')
+        state['workflow_completed_steps'] = completed_steps
         
-        if 'generate_fix' not in state['workflow_completed_steps']:
-            state['workflow_completed_steps'].append('generate_fix')
-        
-        state['workflow_progress_pct'] = len(state['workflow_completed_steps']) / 11.0
-        
+        state['workflow_progress_pct'] = len(completed_steps) / WORKFLOW_TOTAL_STEPS
+
         messages = [
             "⚠️ Conceptual fix generated (GitHub access not available)",
             "✓ Fix provides guidance and code templates"
@@ -574,7 +656,26 @@ Since the actual code is not available, provide:
             messages.append(f"⚠️ Safety concerns: {', '.join(concerns)}")
         
         state['messages'] = state.get('messages', []) + messages
-        
+
+        # Send "Fix Generated" notification (fallback/conceptual fix)
+        try:
+            from agents.workflow import _send_event_notification
+            _send_event_notification(
+                event="Fix Generated (Conceptual)",
+                incident_id=state['incident_id'],
+                severity=state.get('severity', 'HIGH'),
+                app_name=state.get('app_name', ''),
+                environment=state.get('environment', ''),
+                details=(
+                    f"Conceptual fix generated for: {state.get('error_title', 'Unknown')}\n"
+                    f"File: {error_file_path or 'N/A'} (GitHub access not available)\n"
+                    f"Explanation: {fix_explanation[:300]}{'...' if len(fix_explanation) > 300 else ''}"
+                ),
+                project_id=state.get('project_id'),
+            )
+        except Exception as _notify_err:
+            logger.warning("[Fix Generation] Could not send fallback fix notification: %s", _notify_err)
+
         # Update database
         try:
             from storage.database import get_session

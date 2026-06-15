@@ -213,61 +213,8 @@
     }
     .btn-login:active { transform: translateY(0); }
 
-    /* Credentials hints */
     .credentials-section {
-      margin-top: 24px;
-    }
-    .cred-block {
-      display: none;
-      padding: 14px 16px;
-      border-radius: 10px;
-      margin-bottom: 0;
-    }
-    .cred-block.active { display: block; }
-
-    .cred-block--admin {
-      background: rgba(99,102,241,0.08);
-      border: 1px solid rgba(99,102,241,0.2);
-    }
-    .cred-block--team-admin {
-      background: rgba(14,165,233,0.08);
-      border: 1px solid rgba(14,165,233,0.2);
-    }
-    .cred-block--user {
-      background: rgba(16,185,129,0.08);
-      border: 1px solid rgba(16,185,129,0.2);
-    }
-
-    .hint-title {
-      font-size: 11px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.8px;
-      margin-bottom: 10px;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-    .cred-block--admin .hint-title { color: #a5b4fc; }
-    .cred-block--team-admin .hint-title { color: #7dd3fc; }
-    .cred-block--user .hint-title { color: #6ee7b7; }
-
-    .hint-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      font-size: 12px;
-      color: #64748b;
-      margin-bottom: 6px;
-    }
-    .hint-row:last-child { margin-bottom: 0; }
-    .hint-val {
-      font-family: 'Courier New', monospace;
-      color: #e2e8f0;
-      background: rgba(255,255,255,0.07);
-      padding: 2px 10px;
-      border-radius: 5px;
-      font-size: 12px;
+      margin-top: 20px;
     }
 
     .login-footer {
@@ -346,23 +293,10 @@
         <button type="submit" class="btn-login" id="signInBtn">Sign In →</button>
       </form>
 
-      <!-- Credentials Hints per role -->
+      <!-- Sign-in note -->
       <div class="credentials-section">
-        <div class="cred-block cred-block--admin" id="cred-admin">
-          <div class="hint-title">🛡 Admin Credentials</div>
-          <div class="hint-row"><span>Username</span><span class="hint-val">admin</span></div>
-          <div class="hint-row"><span>Password</span><span class="hint-val">admin123</span></div>
-        </div>
-        <div class="cred-block cred-block--team-admin" id="cred-team-admin">
-          <div class="hint-title">👥 Team Admin Credentials</div>
-          <div class="hint-row"><span>Username</span><span class="hint-val">u_avinash</span></div>
-          <div class="hint-row"><span>Password</span><span class="hint-val">admin123</span></div>
-        </div>
-        <div class="cred-block cred-block--user active" id="cred-user">
-          <div class="hint-title">👤 User Credentials</div>
-          <div class="hint-row"><span>Username</span><span class="hint-val">testuser</span></div>
-          <div class="hint-row"><span>Password</span><span class="hint-val">test123</span></div>
-          <div class="hint-row" style="margin-top:6px; color:#475569; font-size:11px;">Team Admin & Admin can also log in as User</div>
+        <div style="text-align:center;margin-top:8px;font-size:11px;color:#334155;">
+          Contact your administrator if you need access credentials.
         </div>
       </div>
     </div>
@@ -374,28 +308,15 @@
     function selectRole(role) {
       // Update tab states
       document.querySelectorAll('.role-tab').forEach(t => t.classList.remove('active'));
-      const activeTab = document.querySelector('[data-role="' + role + '"]');
+      var activeTab = document.querySelector('[data-role="' + role + '"]');
       if (activeTab) activeTab.classList.add('active');
 
       // Update hidden input
       document.getElementById('roleHintInput').value = role;
-
-      // Update credential hints
-      document.querySelectorAll('.cred-block').forEach(b => b.classList.remove('active'));
-      const credMap = { admin: 'cred-admin', team_admin: 'cred-team-admin', user: 'cred-user' };
-      const credId = credMap[role];
-      if (credId) document.getElementById(credId).classList.add('active');
-
-      // Pre-fill username based on role
-      const defaults = { admin: 'admin', team_admin: 'u_avinash', user: 'testuser' };
-      const usernameEl = document.getElementById('username');
-      if (!usernameEl.value || Object.values(defaults).includes(usernameEl.value)) {
-        usernameEl.value = defaults[role] || '';
-      }
     }
 
-    // Init with User selected by default
-    selectRole('user');
+    // Init: select Admin tab by default but leave username/password blank
+    selectRole('admin');
   </script>
 </body>
 </html>

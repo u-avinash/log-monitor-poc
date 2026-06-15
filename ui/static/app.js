@@ -203,10 +203,10 @@
         btn.disabled = true;
         btn.textContent = action === 'approve' ? 'Approving…' : 'Rejecting…';
 
-        fetch('/api/incidents/' + incidentId + '/approval', {
+        fetch('/api/incidents/' + incidentId + '/approve', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: action, notes: notes }),
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: 'action=' + encodeURIComponent(action) + '&notes=' + encodeURIComponent(notes),
         })
           .then(function (r) { return r.json(); })
           .then(function (data) {
@@ -324,7 +324,29 @@
   }
 
   /* ─────────────────────────────────────────────────────────────────────
-   * 8. SIDEBAR TOGGLE (mobile)
+   * 8. REFRESH BUTTON
+   * ───────────────────────────────────────────────────────────────────── */
+
+  function initRefreshBtn() {
+    var btn = document.getElementById('refreshBtn');
+    if (!btn) return;
+    btn.addEventListener('click', function (event) {
+      if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+
+      btn.disabled = true;
+      btn.textContent = '↻ Refreshing…';
+
+      var url = new URL(window.location.href);
+      url.searchParams.set('_refresh', String(Date.now()));
+      window.location.href = url.toString();
+    });
+  }
+
+  /* ─────────────────────────────────────────────────────────────────────
+   * 9. SIDEBAR TOGGLE (mobile)
    * ───────────────────────────────────────────────────────────────────── */
 
   function initSidebar() {
@@ -352,7 +374,7 @@
   }
 
   /* ─────────────────────────────────────────────────────────────────────
-   * 9. INCIDENT LIST — live badge refresh
+   * 10. INCIDENT LIST — live badge refresh
    * ───────────────────────────────────────────────────────────────────── */
 
   /**
@@ -369,7 +391,7 @@
   };
 
   /* ─────────────────────────────────────────────────────────────────────
-   * 10. DIFF VIEWER — keyboard-accessible expand
+   * 11. DIFF VIEWER — keyboard-accessible expand
    * ───────────────────────────────────────────────────────────────────── */
 
   function initDiffViewer() {
@@ -396,7 +418,7 @@
   }
 
   /* ─────────────────────────────────────────────────────────────────────
-   * 11. SERVER-SENT EVENTS (workflow live updates)
+   * 12. SERVER-SENT EVENTS (workflow live updates)
    * ───────────────────────────────────────────────────────────────────── */
 
   /**
@@ -422,7 +444,7 @@
   };
 
   /* ─────────────────────────────────────────────────────────────────────
-   * 12. UTILITIES
+   * 13. UTILITIES
    * ───────────────────────────────────────────────────────────────────── */
 
   function escapeHtml(str) {
@@ -437,7 +459,7 @@
   prism.escapeHtml = escapeHtml;
 
   /* ─────────────────────────────────────────────────────────────────────
-   * 13. BOOT
+   * 14. BOOT
    * ───────────────────────────────────────────────────────────────────── */
 
   function boot() {
@@ -446,6 +468,7 @@
       prism.initTabs(el);
     });
 
+    initRefreshBtn();
     initSwitchers();
     initSidebar();
     initApprovalForm();

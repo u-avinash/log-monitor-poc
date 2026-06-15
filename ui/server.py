@@ -6,17 +6,20 @@ import difflib
 import html as html_module
 import json
 import logging
+import mimetypes
 import os
 import re
 import statistics
 import sys
 from collections import Counter
 from datetime import datetime
+from pathlib import Path
 from typing import Any, AsyncGenerator, List, Optional
 
 import requests
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, Response
 from fastapi.responses import (
+    FileResponse,
     HTMLResponse,
     JSONResponse,
     RedirectResponse,
@@ -45,7 +48,7 @@ from storage.customer_store import (
     update_integration,
     update_team_member,
 )
-from storage.database import get_db, init_database
+from storage.database import get_db, get_session as get_db_session, init_database
 from storage.incident_repository import IncidentRepository
 from storage.models import ApprovalRequest, IncidentResponse, IncidentStatus, Severity
 from storage.telemetry_repository import TelemetryLogRepository
@@ -83,8 +86,62 @@ except Exception as _auth_err:
     _AUTH_AVAILABLE = False
     ALL_FEATURES = []
 
+    def _auth_unavailable(*args, **kwargs):
+        raise RuntimeError("Authentication store is not available")
+
+    authenticate_user = _auth_unavailable
+    create_session = _auth_unavailable
+    delete_session = _auth_unavailable
+    get_session = _auth_unavailable
+    is_first_run = _auth_unavailable
+    create_project = _auth_unavailable
+    update_project = _auth_unavailable
+    delete_project = _auth_unavailable
+    create_team = _auth_unavailable
+    list_projects = lambda: []
+    get_project = _auth_unavailable
+    get_project_config = _auth_unavailable
+    update_project_config = _auth_unavailable
+    clear_project_config = _auth_unavailable
+    list_users = lambda: []
+    create_user = _auth_unavailable
+    update_user = _auth_unavailable
+    delete_user = _auth_unavailable
+    get_user_by_id = _auth_unavailable
+    assign_user_to_project = _auth_unavailable
+    remove_user_from_project = _auth_unavailable
+    get_user_projects = lambda user_id="": []
+    get_project_users = lambda project_id="": []
+    set_user_features = _auth_unavailable
+
 # ── Logging ─────────────────────────────────────────────────────────────────
-logging.basicConfig(level=logging.INFO)
+
+class _PaddedLevelFormatter(logging.Formatter):
+    """Format log records so the level prefix is padded to match uvicorn's
+    alignment style: ``INFO:     name:message`` (levelname+colon padded to
+    9 chars, matching uvicorn's ``" " * (8 - len(levelname))`` separator)."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        spaces = " " * (8 - len(record.levelname))
+        record.levelprefix = f"{record.levelname}:{spaces}"
+        return super().format(record)
+
+
+def _configure_logging() -> None:
+    handler = logging.StreamHandler()
+    handler.setFormatter(
+        _PaddedLevelFormatter("%(levelprefix)s %(name)s:%(message)s")
+    )
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    if not root.handlers:
+        root.addHandler(handler)
+    else:
+        for h in root.handlers:
+            h.setFormatter(_PaddedLevelFormatter("%(levelprefix)s %(name)s:%(message)s"))
+
+
+_configure_logging()
 logger = logging.getLogger(__name__)
 
 # ── App & static mounts ─────────────────────────────────────────────────────
@@ -135,6 +192,8 @@ def _status_badge_class(status: Optional[str]) -> str:
         "DETECTED": "badge-info",
         "RCA_COMPLETE": "badge-info",
         "FIX_GENERATED": "badge-info",
+        "PATCH_GENERATING": "badge-info",
+        "CREATING_JIRA_PR": "badge-info",
         "REJECTED": "badge-error",
         "FAILED": "badge-error",
     }
@@ -181,6 +240,274 @@ def _build_diff_rows(proposed_fix: str) -> Optional[list]:
                 rows.append((None, b_ln, "+", html_module.escape(b_lines[k])))
                 b_ln += 1
     return rows or None
+
+
+def _safe_generated_file(path_value: Optional[str], allowed_suffixes: tuple[str, ...]) -> Optional[Path]:
+    if not path_value:
+        return None
+    try:
+        candidate = Path(path_value).expanduser().resolve()
+    except Exception:
+        return None
+    if not candidate.exists() or not candidate.is_file():
+        return None
+    if candidate.suffix.lower() not in allowed_suffixes:
+        return None
+    return candidate
+
+
+def _build_artifact_info(path_value: Optional[str], kind: str, incident_id: str) -> Optional[dict]:
+    suffixes = {
+        "pdf": (".pdf",),
+        "patch": (".patch", ".diff", ".txt", ".md"),
+    }[kind]
+    artifact_path = _safe_generated_file(path_value, suffixes)
+    if not artifact_path:
+        return None
+
+    route_base = f"/incidents/{incident_id}/artifacts/{kind}"
+    return {
+        "kind": kind,
+        "name": artifact_path.name,
+        "path": str(artifact_path),
+        "size_bytes": artifact_path.stat().st_size,
+        "preview_url": route_base if kind == "pdf" else None,
+        "download_url": f"{route_base}?download=1",
+        "exists": True,
+    }
+
+
+def _github_repo_url(repo_full_name: Optional[str]) -> Optional[str]:
+    if not repo_full_name:
+        return None
+    return f"https://github.com/{repo_full_name}"
+
+
+def _github_branch_url(repo_full_name: Optional[str], branch_name: Optional[str]) -> Optional[str]:
+    if not repo_full_name or not branch_name:
+        return None
+    return f"https://github.com/{repo_full_name}/tree/{branch_name}"
+
+
+def _github_file_url(repo_full_name: Optional[str], file_path: Optional[str], line_number: Optional[int] = None) -> Optional[str]:
+    if not repo_full_name or not file_path:
+        return None
+    url = f"https://github.com/{repo_full_name}/blob/main/{file_path.lstrip('/')}"
+    if line_number:
+        url += f"#L{line_number}"
+    return url
+
+
+def _build_incident_links(inc: Any, pdf_artifact: Optional[dict], patch_artifact: Optional[dict]) -> list[dict]:
+    links: list[dict] = []
+
+    def _add(label: str, url: Optional[str], kind: str) -> None:
+        if url:
+            links.append({"label": label, "url": url, "kind": kind})
+
+    _add("GitHub Repository", _github_repo_url(getattr(inc, "repo_full_name", None)), "github")
+    _add("Error Source", _github_file_url(getattr(inc, "repo_full_name", None), getattr(inc, "error_file_path", None), getattr(inc, "error_line_number", None)), "github")
+    _add("Fix Branch", _github_branch_url(getattr(inc, "repo_full_name", None), getattr(inc, "fix_branch", None)), "github")
+    _add("Commit", getattr(inc, "commit_url", None), "github")
+    _add("Pull Request", getattr(inc, "pr_url", None), "github")
+    _add("Jira Ticket", getattr(inc, "jira_ticket_url", None), "jira")
+    if pdf_artifact:
+        _add("RCA PDF", pdf_artifact["download_url"], "artifact")
+    if patch_artifact:
+        _add("Patch File", patch_artifact["download_url"], "artifact")
+    return links
+
+
+def _build_incident_timeline(inc: Any, pdf_artifact: Optional[dict], patch_artifact: Optional[dict]) -> list[dict]:
+    timeline: list[dict] = []
+
+    def _push(source: str, title: str, details: str, status: str = "success", timestamp: Any = None, url: Optional[str] = None, preview: Optional[str] = None) -> None:
+        timeline.append(
+            {
+                "source": source,
+                "title": title,
+                "details": details,
+                "status": status,
+                "timestamp": _fmt_dt(timestamp),
+                "url": url,
+                "preview": preview,
+            }
+        )
+
+    created_at = getattr(inc, "created_at", None)
+    updated_at = getattr(inc, "updated_at", None)
+
+    # ── 1. Incident detected ────────────────────────────────────────────────
+    _push(
+        "workflow",
+        "Incident detected",
+        getattr(inc, "error_title", None) or "Incident created from telemetry/event stream",
+        "success",
+        created_at,
+    )
+
+    # ── 2. Workflow steps in canonical execution order ──────────────────────
+    # Canonical order matches the workflow progress tracker shown in the UI.
+    _canonical_step_order = [
+        "assess_severity",
+        "generate_rca",
+        "generate_fix",
+        "generate_pdf",
+        "reflect",
+        "generate_patch",
+        "await_approval",
+        "send_notifications",
+        "create_jira",
+        "create_pr",
+        "finalize",
+    ]
+    _canonical_labels = {
+        "assess_severity": "Assess Severity",
+        "generate_rca": "Generate Rca",
+        "generate_fix": "Generate Fix",
+        "generate_pdf": "Generate Pdf",
+        "reflect": "Reflect",
+        "generate_patch": "Generate Patch",
+        "await_approval": "Await Approval",
+        "send_notifications": "Send Notifications",
+        "create_jira": "Create Jira",
+        "create_pr": "Create Pr",
+        "finalize": "Finalize",
+    }
+    _completed_steps_set = set(list(getattr(inc, "workflow_completed_steps", None) or []))
+    # Push only steps that are in both the canonical list and the completed set,
+    # preserving canonical workflow order so the audit trail always reads top-to-bottom
+    # in the same sequence as the Workflow Progress tracker.
+    for _step_id in _canonical_step_order:
+        if _step_id in _completed_steps_set:
+            _label = _canonical_labels.get(_step_id, _step_id.replace("_", " ").title())
+            _push(
+                "workflow",
+                _label,
+                f"Workflow step `{_step_id}` completed.",
+                "success",
+                updated_at,
+            )
+
+    # ── 3. Approval decision ────────────────────────────────────────────────
+    _inc_appr_status = getattr(inc, "approval_status", None) or ""
+    _inc_status_val = getattr(inc, "status", None) or ""
+    _post_approval = _inc_appr_status == "approved" or _inc_status_val in ("APPROVED", "COMPLETED", "PR_CREATED")
+
+    if _inc_appr_status == "pending":
+        _push("workflow", "Awaiting approval", "Patch file is already available for testing. Human approval is required before Jira creation, PR creation, and notifications.", "warning", updated_at)
+    elif _inc_appr_status == "approved":
+        _push("workflow", "Fix approved", getattr(inc, "approval_notes", None) or "Fix approved for downstream execution.", "success", getattr(inc, "approved_at", None))
+    elif _inc_appr_status == "rejected":
+        _push("workflow", "Fix rejected", getattr(inc, "approval_notes", None) or "Fix rejected during human review.", "error", getattr(inc, "approved_at", None))
+
+    # ── 4. Notifications (send_notifications step) ─────────────────────────
+    if getattr(inc, "slack_notification_sent", False):
+        slack_preview = (
+            f"Incident {getattr(inc, 'incident_id', '')}: {getattr(inc, 'error_title', '')}\n"
+            f"Severity {getattr(inc, 'severity', 'UNKNOWN')} · {getattr(inc, 'status', 'UNKNOWN').replace('_', ' ')}"
+        )
+        _push("slack", "Slack notification sent", "Slack delivery completed.", "success", updated_at, preview=slack_preview)
+    elif _post_approval:
+        _push("slack", "Slack notification pending", "Slack alert will be sent as part of the post-approval workflow.", "warning", updated_at)
+
+    if getattr(inc, "teams_notification_sent", False):
+        teams_preview = (
+            f"Incident {getattr(inc, 'incident_id', '')}\n"
+            f"{getattr(inc, 'app_name', '')} / {getattr(inc, 'environment', '')}\n"
+            f"{getattr(inc, 'error_title', '')}"
+        )
+        _push("teams", "Teams notification sent", "Microsoft Teams delivery completed.", "success", updated_at, preview=teams_preview)
+
+    for error in list(getattr(inc, "notification_errors", None) or []):
+        _push("notification", "Notification issue", str(error), "error", updated_at)
+
+    # ── 5. Jira (create_jira step) ──────────────────────────────────────────
+    if getattr(inc, "jira_ticket_key", None) or getattr(inc, "jira_ticket_url", None):
+        _push(
+            "jira",
+            "Jira ticket created",
+            str(getattr(inc, "jira_ticket_key", None) or "Jira issue available for tracking"),
+            "success",
+            updated_at,
+            getattr(inc, "jira_ticket_url", None),
+        )
+    elif getattr(inc, "jira_error", None):
+        _push("jira", "Jira creation failed", str(getattr(inc, "jira_error", None) or ""), "error", updated_at)
+    elif _post_approval:
+        _push("jira", "Jira ticket pending", "Jira ticket will be created as part of the post-approval workflow.", "warning", updated_at)
+
+    # ── 6. GitHub PR (create_pr step) ──────────────────────────────────────
+    repo_full_name = getattr(inc, "repo_full_name", None)
+    if getattr(inc, "fix_branch", None):
+        _push(
+            "github",
+            "Fix branch created",
+            str(getattr(inc, "fix_branch", None) or ""),
+            "success",
+            updated_at,
+            _github_branch_url(repo_full_name, getattr(inc, "fix_branch", None)),
+        )
+
+    if getattr(inc, "commit_sha", None):
+        _push(
+            "github",
+            "Commit created",
+            str(getattr(inc, "commit_sha", None) or ""),
+            "success",
+            updated_at,
+            getattr(inc, "commit_url", None),
+        )
+
+    if getattr(inc, "pr_url", None):
+        _push(
+            "github",
+            "Pull request created",
+            f"PR #{getattr(inc, 'pr_number', '—')} is available for review.",
+            "success",
+            updated_at,
+            getattr(inc, "pr_url", None),
+        )
+    elif getattr(inc, "status", None) == "PR_CREATED":
+        _push("github", "Pull request status updated", "PR workflow step completed.", "success", updated_at)
+    elif "create_pr" in (getattr(inc, "current_workflow_node", None) or "") and _inc_status_val.upper() == "JIRA_CREATED":
+        _push("github", "Pull request creation failed", "PR could not be created — check fixed_file_content, repo_full_name, and error_file_path in the workflow state.", "error", updated_at)
+    elif "create_pr" in (getattr(inc, "current_workflow_node", None) or ""):
+        _push("github", "Pull request in progress", "PR creation is currently in progress.", "warning", updated_at)
+    elif _post_approval:
+        _push("github", "GitHub PR pending", "Pull request will be created as part of the post-approval workflow.", "warning", updated_at)
+
+    # ── 7. Artifacts ────────────────────────────────────────────────────────
+    if pdf_artifact:
+        _push("artifact", "RCA report generated", f"{pdf_artifact['name']} is available for preview and download.", "success", updated_at, pdf_artifact["download_url"])
+    else:
+        _push("artifact", "RCA report pending", "PDF output is not yet available.", "warning", updated_at)
+
+    if patch_artifact:
+        _push("artifact", "Patch generated", f"{patch_artifact['name']} is ready for download.", "success", updated_at, patch_artifact["download_url"])
+    else:
+        _push("artifact", "Patch pending", "Patch file has not been generated yet.", "warning", updated_at)
+
+    # No sort — insertion order matches canonical workflow execution order.
+    return timeline
+
+
+def _workflow_improvements(inc: Any, pdf_artifact: Optional[dict], patch_artifact: Optional[dict]) -> list[str]:
+    suggestions: list[str] = []
+
+    if getattr(inc, "rca_text", None) and not pdf_artifact:
+        suggestions.append("Persist RCA PDF generation status with timestamp and error details when the report is unavailable.")
+    if getattr(inc, "proposed_fix", None) and not patch_artifact:
+        suggestions.append("Generate the patch immediately after fix creation or show the exact blocker preventing patch output.")
+    if getattr(inc, "jira_ticket_url", None) and not getattr(inc, "pr_url", None):
+        suggestions.append("Surface why PR creation has not happened after Jira creation to reduce operator ambiguity.")
+    if list(getattr(inc, "notification_errors", None) or []):
+        suggestions.append("Expose notification destinations and retry state so failed Slack/Teams deliveries can be remediated quickly.")
+    if not getattr(inc, "fetched_code", None):
+        suggestions.append("Persist fetched GitHub code context for RCA transparency and easier auditability.")
+    if not suggestions:
+        suggestions.append("Workflow looks healthy; the next improvement would be adding timestamps for each workflow node transition.")
+    return suggestions
 
 
 templates.env.filters["severity_badge"] = _severity_badge_class
@@ -260,7 +587,7 @@ def _get_accessible_projects_for_user(user: Optional[dict]) -> list:
 
 
 def _get_selected_project(request: Request, user: Optional[dict]) -> Optional[dict]:
-    my_projects = _get_accessible_projects_for_user(user)
+    my_projects = _get_accessible_projects_with_fallback(user)
     if not my_projects:
         return None
     active_project_id = request.cookies.get("active_project", "")
@@ -268,13 +595,325 @@ def _get_selected_project(request: Request, user: Optional[dict]) -> Optional[di
     return selected_project or my_projects[0]
 
 
+def _get_active_project_id(request: Request, user: Optional[dict]) -> str:
+    selected_project = _get_selected_project(request, user)
+    return str((selected_project or {}).get("id") or "")
+
+
+def _get_user_id(user: Optional[dict]) -> str:
+    if not user:
+        return ""
+    return str(user.get("user_id") or user.get("id") or "")
+
+
+def _get_accessible_projects_with_fallback(user: Optional[dict]) -> list:
+    if not (_AUTH_AVAILABLE and user):
+        return []
+
+    user_id = _get_user_id(user)
+    role = str(user.get("role") or "").strip().lower()
+
+    projects = get_user_projects(user_id) if user_id else []
+    if projects or role == "admin":
+        return projects
+
+    username = str(user.get("username") or "").strip().lower()
+    email = str(user.get("email") or "").strip().lower()
+
+    fallback_matches = []
+    for project in list_projects():
+        team_admin_id = str(project.get("team_admin_id") or "").strip()
+        team_admin_email = str(project.get("team_admin_email") or "").strip().lower()
+
+        if user_id and team_admin_id == user_id:
+            fallback_matches.append(project)
+            continue
+
+        if email and team_admin_email and email == team_admin_email:
+            fallback_matches.append(project)
+            continue
+
+        if username and team_admin_email and username == team_admin_email.split("@")[0].lower():
+            fallback_matches.append(project)
+
+    return fallback_matches
+
+
+def _normalize_project_token(value: Optional[str]) -> str:
+    return re.sub(r"[^a-z0-9]+", "", (value or "").strip().lower())
+
+
+def _load_app_repo_mapping() -> dict:
+    try:
+        import yaml
+
+        with open("config/app_repo_mapping.yaml", "r", encoding="utf-8") as mapping_file:
+            mapping_config = yaml.safe_load(mapping_file) or {}
+        return mapping_config.get("app_mappings") or {}
+    except Exception as exc:
+        logger.debug("Could not load app repo mapping: %s", exc)
+        return {}
+
+
+def _project_candidate_tokens(project: Optional[dict], incident_app_name: Optional[str] = None) -> set[str]:
+    if not project:
+        return set()
+
+    project_repo_url = (project.get("repo_url") or "").strip()
+    project_app_names = project.get("app_names") or []
+    project_id = (project.get("id") or "").strip()
+
+    candidate_tokens: set[str] = set()
+
+    if project_repo_url:
+        tok = _normalize_project_token(project_repo_url)
+        if tok:
+            candidate_tokens.add(tok)
+        repo_leaf = _normalize_project_token(project_repo_url.rstrip("/").split("/")[-1])
+        if repo_leaf:
+            candidate_tokens.add(repo_leaf)
+
+    for app_alias in project_app_names:
+        normalized_alias = _normalize_project_token(app_alias)
+        if normalized_alias:
+            candidate_tokens.add(normalized_alias)
+
+    if project_id and _AUTH_AVAILABLE:
+        try:
+            from storage.auth_store import get_app_repo_mapping as _get_db_mapping
+            db_mappings = _get_db_mapping(project_id) or {}
+            for mapped_app, mapping_val in db_mappings.items():
+                app_tok = _normalize_project_token(mapped_app)
+                if app_tok:
+                    candidate_tokens.add(app_tok)
+                mapped_repo = (mapping_val.get("repo") or "") if isinstance(mapping_val, dict) else ""
+                if mapped_repo:
+                    mapped_repo_token = _normalize_project_token(mapped_repo)
+                    if mapped_repo_token:
+                        candidate_tokens.add(mapped_repo_token)
+                    leaf = _normalize_project_token(mapped_repo.split("/")[-1])
+                    if leaf:
+                        candidate_tokens.add(leaf)
+        except Exception:
+            pass
+
+    if incident_app_name:
+        mapped_repo = (_load_app_repo_mapping().get(incident_app_name) or {}).get("repo") or ""
+        if mapped_repo:
+            mapped_repo_token = _normalize_project_token(mapped_repo)
+            if mapped_repo_token:
+                candidate_tokens.add(mapped_repo_token)
+            mapped_repo_leaf = _normalize_project_token(mapped_repo.split("/")[-1])
+            if mapped_repo_leaf:
+                candidate_tokens.add(mapped_repo_leaf)
+
+    return {token for token in candidate_tokens if token}
+
+
+def _incident_matches_project(incident: Any, project: Optional[dict]) -> bool:
+    if not project:
+        return True
+
+    incident_app_name = (getattr(incident, "app_name", None) or "").strip()
+    normalized_incident_app = _normalize_project_token(incident_app_name)
+    candidate_tokens = _project_candidate_tokens(project, incident_app_name)
+
+    if candidate_tokens:
+        return (
+            not normalized_incident_app
+            or normalized_incident_app in candidate_tokens
+            or any(
+                normalized_incident_app in candidate_token or candidate_token in normalized_incident_app
+                for candidate_token in candidate_tokens
+            )
+        )
+
+    project_id = (project.get("id") or "").strip()
+    if project_id and _AUTH_AVAILABLE:
+        try:
+            from agents.workflow import _resolve_project_id_for_incident
+
+            resolved_project_id = _resolve_project_id_for_incident(
+                None,
+                incident_app_name,
+                getattr(incident, "environment", None),
+            )
+            if resolved_project_id:
+                return resolved_project_id == project_id
+        except Exception:
+            pass
+
+    return True
+
+
+def _configured_integrations(project_config: Optional[dict]) -> dict:
+    config = project_config or {}
+
+    def _section_is_configured(section_name: str) -> bool:
+        section = config.get(section_name) or {}
+        if not isinstance(section, dict):
+            return bool(section)
+        for field_name, field_value in section.items():
+            if field_name.endswith("_configured"):
+                if field_value:
+                    return True
+                continue
+            if field_value not in (None, "", [], {}, False):
+                return True
+        return False
+
+    return {
+        key: _section_is_configured(key)
+        for key in ["llm", "jira", "github", "anypoint", "slack", "teams"]
+    }
+
+
 def _get_project_integration_status(project: Optional[dict]) -> dict:
     if not (_AUTH_AVAILABLE and project):
         return {}
-    project_config = get_project_config(project["id"]) or {}
+    return _configured_integrations(get_project_config(project["id"]) or {})
+
+
+def _get_project_integration_summary(project: Optional[dict]) -> list[dict]:
+    if not (_AUTH_AVAILABLE and project):
+        return []
+
+    project_config = get_project_config(project["id"], mask_secrets=True) or {}
+    enabled_map = _configured_integrations(project_config)
+    secret_map = _masked_secret_status(project_config)
+
+    labels = {
+        "llm": "LLM",
+        "jira": "Jira",
+        "github": "GitHub",
+        "anypoint": "Anypoint",
+        "slack": "Slack",
+        "teams": "Teams",
+    }
+
+    llm_config = project_config.get("llm") or {}
+    llm_model = (
+        llm_config.get("model")
+        or llm_config.get("model_name")
+        or llm_config.get("deployment_name")
+        or llm_config.get("selected_model")
+        or ""
+    )
+    llm_provider = llm_config.get("provider") or llm_config.get("vendor") or ""
+
+    integrations: list[dict] = []
+    for key, label in labels.items():
+        configured = enabled_map.get(key, False)
+        live = configured and secret_map.get(key, False)
+
+        meta = ""
+        if key == "llm":
+            meta_parts = [part for part in [llm_model, llm_provider] if part]
+            meta = " · ".join(meta_parts[:2])
+
+        integrations.append(
+            {
+                "key": key,
+                "label": label,
+                "configured": configured,
+                "live": live,
+                "status_label": "Connected" if live else "Configured",
+                "badge_class": "badge-success" if live else "badge-warning",
+                "status_tone": "is-live" if live else "is-configured",
+                "meta": meta,
+            }
+        )
+
+    return [item for item in integrations if item["configured"]]
+
+
+def _masked_secret_status(project_config: Optional[dict]) -> dict:
+    config = project_config or {}
+    statuses: dict[str, bool] = {}
+    for section, key in {
+        "llm": "api_key_configured",
+        "jira": "api_token_configured",
+        "github": "token_configured",
+        "anypoint": "client_secret_configured",
+        "slack": "webhook_url_configured",
+        "teams": "webhook_url_configured",
+    }.items():
+        statuses[section] = bool((config.get(section) or {}).get(key))
+    return statuses
+
+
+def _build_demo_readiness(project: Optional[dict]) -> dict:
+    project_config = get_project_config(project["id"], mask_secrets=True) if (_AUTH_AVAILABLE and project) else {}
+    integration_enabled = _configured_integrations(project_config)
+    integration_secrets = _masked_secret_status(project_config)
+
+    try:
+        db_path = Path(settings.database_path).expanduser().resolve()
+        database_ready = db_path.exists()
+    except Exception:
+        database_ready = False
+
+    ingestion_online = False
+    try:
+        response = requests.get(
+            f"http://localhost:{settings.ingestion_api_port}/health",
+            timeout=2,
+        )
+        ingestion_online = response.status_code == 200
+    except Exception:
+        ingestion_online = False
+
+    runtime_config = (project_config or {}).get("runtime", {}) if project_config else {}
+    has_runtime_config = all(
+        runtime_config.get(key)
+        for key in ("otlp_collector_port", "database_path", "pdf_output_dir", "patch_output_dir")
+    )
+
+    checks = [
+        {
+            "label": "Database file available",
+            "ok": database_ready,
+            "detail": str(Path(settings.database_path).expanduser()),
+        },
+        {
+            "label": "Ingestion API reachable",
+            "ok": ingestion_online,
+            "detail": f"http://localhost:{settings.ingestion_api_port}/health",
+        },
+        {
+            "label": "Project selected",
+            "ok": project is not None,
+            "detail": (project or {}).get("name", "No active project"),
+        },
+        {
+            "label": "Runtime configuration saved",
+            "ok": has_runtime_config,
+            "detail": "Project runtime paths and OTLP port",
+        },
+    ]
+
+    for section, label in [
+        ("llm", "LLM"),
+        ("jira", "Jira"),
+        ("github", "GitHub"),
+        ("anypoint", "Anypoint"),
+        ("slack", "Slack"),
+        ("teams", "Teams"),
+    ]:
+        enabled = integration_enabled.get(section, False)
+        secret_ready = integration_secrets.get(section, False)
+        ok = (not enabled) or secret_ready
+        detail = "Configured" if secret_ready else ("Enabled in project config but secret missing" if enabled else "Optional / not configured")
+        checks.append({"label": f"{label} credentials", "ok": ok, "detail": detail})
+
+    passed = sum(1 for item in checks if item["ok"])
     return {
-        key: bool((project_config or {}).get(key))
-        for key in ["llm", "jira", "github", "anypoint", "slack", "teams"]
+        "checks": checks,
+        "passed": passed,
+        "total": len(checks),
+        "is_ready": passed == len(checks),
+        "integration_enabled": integration_enabled,
+        "integration_secrets": integration_secrets,
     }
 
 
@@ -286,7 +925,7 @@ def _load_live_observability_data(selected_project: Optional[dict]) -> dict:
     project_name = (selected_project or {}).get("name")
     project_env = (selected_project or {}).get("environment")
 
-    with get_session() as session:
+    with get_db_session() as session:
         telemetry_repo = TelemetryLogRepository(session)
         incident_repo = IncidentRepository(session)
 
@@ -723,7 +1362,7 @@ def _role_home(role: str) -> str:
         return "/admin/dashboard"
     if role == "team_admin":
         return "/team-admin/dashboard"
-    return "/dashboard"
+    return "/incidents"
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -908,8 +1547,7 @@ async def team_admin_dashboard(request: Request, project_id: str = Query(default
     if redir:
         return redir
     user = _get_current_user(request)
-    uid = (user or {}).get("user_id", "")
-    my_projects = get_user_projects(uid) if (_AUTH_AVAILABLE and uid) else []
+    my_projects = _get_accessible_projects_with_fallback(user)
     active_project_id = project_id or request.cookies.get("active_project", "")
     selected_project = next((p for p in my_projects if p.get("id") == active_project_id), None)
     if not selected_project and my_projects:
@@ -925,10 +1563,7 @@ async def team_admin_dashboard(request: Request, project_id: str = Query(default
             team_users = [u for u in all_users if u.get("role") == "user"]
 
     integration_config = get_project_config(selected_project["id"]) if (_AUTH_AVAILABLE and selected_project) else {}
-    integration_status = {
-        key: bool((integration_config or {}).get(key))
-        for key in ["llm", "jira", "github", "anypoint", "slack", "teams"]
-    }
+    integration_status = _configured_integrations(integration_config)
     runtime_config = (integration_config or {}).get("runtime", {}) if integration_config else {}
 
     return templates.TemplateResponse(
@@ -956,68 +1591,17 @@ async def team_admin_dashboard(request: Request, project_id: str = Query(default
 # ── Regular User Dashboard ──────────────────────────────────────────────────
 
 @app.get("/dashboard", response_class=HTMLResponse)
-async def dashboard(request: Request, repo: IncidentRepository = Depends(get_repository)):
+async def dashboard(request: Request):
     auth_redirect = _require_auth(request)
     if auth_redirect:
         return auth_redirect
     user = _get_current_user(request)
-    # Redirect admins/team_admins to their proper home
     role = (user or {}).get("role", "user")
     if role == "admin":
         return RedirectResponse(url="/admin/dashboard", status_code=302)
     if role == "team_admin":
         return RedirectResponse(url="/team-admin/dashboard", status_code=302)
-
-    incidents = repo.get_all(limit=1000)
-    stats = _compute_stats(incidents)
-    recent = incidents[:10]
-
-    # Check API connectivity
-    api_online = False
-    try:
-        r = requests.get(
-            f"http://localhost:{settings.ingestion_api_port}/health", timeout=2
-        )
-        api_online = r.status_code == 200
-    except Exception:
-        pass
-
-    # Projects for this user
-    my_projects = []
-    selected_project = None
-    integration_status = {}
-    if _AUTH_AVAILABLE and user:
-        my_projects = get_user_projects(user.get("user_id", ""))
-        active_project_id = request.cookies.get("active_project", "")
-        selected_project = next((p for p in my_projects if p.get("id") == active_project_id), None)
-        if not selected_project and my_projects:
-            selected_project = my_projects[0]
-        if selected_project:
-            project_config = get_project_config(selected_project["id"]) or {}
-            integration_status = {
-                key: bool((project_config or {}).get(key))
-                for key in ["llm", "jira", "github", "anypoint", "slack", "teams"]
-            }
-
-    user_features = []
-    if user:
-        user_features = list(dict.fromkeys(user.get("features", ["dashboard", "incidents"])))
-
-    return templates.TemplateResponse(
-        request,
-        "dashboard.html",
-        {
-            "current_user": user,
-            "stats": stats,
-            "recent_incidents": recent,
-            "api_online": api_online,
-            "my_projects": my_projects,
-            "selected_project": selected_project,
-            "integration_status": integration_status,
-            "user_features": user_features,
-            "page": "dashboard",
-        },
-    )
+    return RedirectResponse(url="/incidents", status_code=302)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -1068,13 +1652,20 @@ async def admin_onboarding_post(
             # Find or create Team Admin user
             ta_user = next((u for u in all_users if u.get("email", "").lower() == team_admin_email.lower()), None)
             if not ta_user:
+                import secrets as _secrets
                 username = team_admin_email.split("@")[0].replace(".", "_")
+                # Generate a strong random temporary password — admin must share it securely
+                temp_password = _secrets.token_urlsafe(16)
                 ta_user = create_user({
                     "username": username,
                     "email": team_admin_email,
-                    "password": "changeme",
+                    "password": temp_password,
                     "role": "team_admin",
                 })
+                success = (
+                    f"Project '{project_name}' created and assigned to {team_admin_email}. "
+                    f"Temporary password (share securely): {temp_password}"
+                )
             project = create_project({
                 "name": project_name,
                 "description": project_description,
@@ -1106,8 +1697,8 @@ async def team_admin_onboarding_page(request: Request, project_id: str = Query(d
     if redir:
         return redir
     user = _get_current_user(request)
-    uid = (user or {}).get("user_id", "")
-    my_projects = get_user_projects(uid) if (_AUTH_AVAILABLE and uid) else []
+    uid = _get_user_id(user)
+    my_projects = _get_accessible_projects_with_fallback(user)
     active_project_id = project_id or request.cookies.get("active_project", "")
     selected_project = get_project(active_project_id) if (_AUTH_AVAILABLE and active_project_id) else None
     if selected_project and my_projects and selected_project.get("id") not in [p.get("id") for p in my_projects]:
@@ -1162,8 +1753,8 @@ async def team_admin_onboarding_post(request: Request):
         except Exception as exc:
             error = f"Error: {exc}"
 
-    uid = (user or {}).get("user_id", "")
-    my_projects = get_user_projects(uid) if (_AUTH_AVAILABLE and uid) else []
+    uid = _get_user_id(user)
+    my_projects = _get_accessible_projects_with_fallback(user)
     selected_project = get_project(project_id) if (_AUTH_AVAILABLE and project_id) else None
     config = get_project_config(project_id) if (_AUTH_AVAILABLE and project_id) else {}
     all_users = list_users() if _AUTH_AVAILABLE else []
@@ -1255,10 +1846,7 @@ async def api_team_admin_save_integration(int_type: str, request: Request):
     project_id = (body.get("project_id") or "").strip()
     if not project_id:
         user = _get_current_user(request)
-        uid = (user or {}).get("user_id", "")
-        my_projects = get_user_projects(uid) if uid else []
-        if my_projects:
-            project_id = my_projects[0]["id"]
+        project_id = _get_active_project_id(request, user)
 
     if not project_id:
         return JSONResponse({"error": "No project found for this user"}, status_code=400)
@@ -1289,10 +1877,7 @@ async def api_team_admin_delete_integration(int_type: str, request: Request):
     project_id = (body.get("project_id") or "").strip()
     if not project_id:
         user = _get_current_user(request)
-        uid = (user or {}).get("user_id", "")
-        my_projects = get_user_projects(uid) if uid else []
-        if my_projects:
-            project_id = my_projects[0]["id"]
+        project_id = _get_active_project_id(request, user)
 
     if not project_id:
         return JSONResponse({"error": "No project found for this user"}, status_code=400)
@@ -1302,6 +1887,82 @@ async def api_team_admin_delete_integration(int_type: str, request: Request):
         return JSONResponse({"success": True, "type": int_type, "project_id": project_id})
     except Exception as exc:
         logger.error("delete-integration error: %s", exc, exc_info=True)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.get("/api/team-admin/repo-mappings")
+async def api_get_repo_mappings(request: Request, project_id: str = Query(default="")):
+    """Return the app→repo mappings for a project."""
+    redir = _require_role(request, "team_admin", "admin")
+    if redir:
+        return JSONResponse({"error": "Unauthorized"}, status_code=403)
+    if not _AUTH_AVAILABLE or not project_id:
+        return JSONResponse({})
+    try:
+        from storage.auth_store import get_app_repo_mapping
+        return JSONResponse(get_app_repo_mapping(project_id))
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.post("/api/team-admin/repo-mappings")
+async def api_save_repo_mappings(request: Request):
+    """Save (overwrite) the app→repo mappings for a project."""
+    redir = _require_role(request, "team_admin", "admin")
+    if redir:
+        return JSONResponse({"error": "Unauthorized"}, status_code=403)
+    if not _AUTH_AVAILABLE:
+        return JSONResponse({"error": "Auth not available"}, status_code=503)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+
+    project_id = (body.get("project_id") or "").strip()
+    if not project_id:
+        user = _get_current_user(request)
+        project_id = _get_active_project_id(request, user)
+    if not project_id:
+        return JSONResponse({"error": "No project found for this user"}, status_code=400)
+
+    mappings = body.get("mappings") or {}
+    if not isinstance(mappings, dict):
+        return JSONResponse({"error": "mappings must be a JSON object"}, status_code=400)
+
+    # Normalize: ensure every repo value is in "org/repo" format.
+    # If a bare repo name is provided (no slash), auto-prepend the project's configured GitHub org.
+    try:
+        from storage.auth_store import get_project_config as _get_proj_cfg
+        _proj_cfg = _get_proj_cfg(project_id) or {}
+        _github_org = (_proj_cfg.get("github") or {}).get("org", "").strip()
+    except Exception:
+        _github_org = ""
+
+    normalized_mappings: dict = {}
+    for app_name, mapping_val in mappings.items():
+        if not isinstance(mapping_val, dict):
+            continue
+        repo_val = (mapping_val.get("repo") or "").strip()
+        if repo_val and "/" not in repo_val:
+            if _github_org:
+                repo_val = f"{_github_org}/{repo_val}"
+                logger.info(
+                    "Repo mapping normalized: '%s' → '%s' for app '%s'",
+                    mapping_val.get("repo"), repo_val, app_name,
+                )
+            else:
+                logger.warning(
+                    "Repo mapping for app '%s' has no org prefix and no GitHub org configured: '%s'",
+                    app_name, repo_val,
+                )
+        normalized_mappings[app_name] = {**mapping_val, "repo": repo_val}
+
+    try:
+        from storage.auth_store import set_app_repo_mapping
+        set_app_repo_mapping(project_id, normalized_mappings)
+        return JSONResponse({"success": True, "project_id": project_id, "count": len(normalized_mappings)})
+    except Exception as exc:
+        logger.error("save-repo-mappings error: %s", exc, exc_info=True)
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
@@ -1322,10 +1983,7 @@ async def api_team_admin_save_runtime_config(request: Request):
     project_id = (body.get("project_id") or "").strip()
     if not project_id:
         user = _get_current_user(request)
-        uid = (user or {}).get("user_id", "")
-        my_projects = get_user_projects(uid) if uid else []
-        if my_projects:
-            project_id = my_projects[0]["id"]
+        project_id = _get_active_project_id(request, user)
 
     if not project_id:
         return JSONResponse({"error": "No project found for this user"}, status_code=400)
@@ -1425,6 +2083,8 @@ async def api_team_admin_test_integration(int_type: str, request: Request):
             return JSONResponse({"success": False, "error": "Max tokens must be greater than 0."}, status_code=400)
 
         try:
+            api_key = api_key.replace("\r", "").replace("\n", "").strip()
+
             llm = LLMProvider(
                 provider=provider,
                 model=model,
@@ -1435,9 +2095,34 @@ async def api_team_admin_test_integration(int_type: str, request: Request):
             )
             ok, message = llm.test_connection_fast(timeout_seconds=10.0)
             status = 200 if ok else 400
-            return JSONResponse({"success": ok, "message": message, "error": None if ok else message}, status_code=status)
+
+            if not ok:
+                sanitized_message = message
+                if api_key:
+                    sanitized_message = sanitized_message.replace(api_key, "[REDACTED_API_KEY]")
+                sanitized_message = re.sub(
+                    r"(Incorrect API key provided:\s*)([^\s,}]+)",
+                    r"\1[REDACTED_API_KEY]",
+                    sanitized_message,
+                    flags=re.IGNORECASE,
+                )
+                return JSONResponse(
+                    {"success": False, "message": None, "error": sanitized_message},
+                    status_code=status,
+                )
+
+            return JSONResponse({"success": True, "message": message, "error": None}, status_code=status)
         except Exception as exc:
-            return JSONResponse({"success": False, "error": str(exc)}, status_code=400)
+            error_message = str(exc)
+            if api_key:
+                error_message = error_message.replace(api_key, "[REDACTED_API_KEY]")
+            error_message = re.sub(
+                r"(Incorrect API key provided:\s*)([^\s,}]+)",
+                r"\1[REDACTED_API_KEY]",
+                error_message,
+                flags=re.IGNORECASE,
+            )
+            return JSONResponse({"success": False, "error": error_message}, status_code=400)
 
     if int_type == "jira":
         base_url = (body.get("base_url") or "").strip().rstrip("/")
@@ -1919,16 +2604,19 @@ async def api_create_user(request: Request):
     if role not in {"admin", "team_admin", "user"}:
         return JSONResponse({"error": "Valid role is required"}, status_code=400)
 
-    duplicate = next(
-        (
-            u for u in list_users()
-            if u.get("username", "").lower() == username.lower()
-            or u.get("email", "").lower() == email.lower()
-        ),
-        None,
-    )
-    if duplicate:
-        return JSONResponse({"error": "User with the same username or email already exists"}, status_code=400)
+    all_existing = list_users()
+    username_conflict = next((u for u in all_existing if u.get("username", "").lower() == username.lower()), None)
+    email_conflict = next((u for u in all_existing if u.get("email", "").lower() == email.lower()), None)
+    if username_conflict:
+        return JSONResponse(
+            {"error": f"Username '{username}' is already taken. Please choose a different username."},
+            status_code=400,
+        )
+    if email_conflict:
+        return JSONResponse(
+            {"error": f"Email '{email}' is already registered (role: {email_conflict.get('role', 'user')}). Use a different email or log in with that account."},
+            status_code=400,
+        )
 
     user = create_user({
         "username": username,
@@ -2163,32 +2851,56 @@ async def incidents_page(
     severity: Optional[List[str]] = Query(default=None),
     status: Optional[List[str]] = Query(default=None),
     app_name: Optional[str] = Query(default=None),
+    search: Optional[str] = Query(default=None),
     repo: IncidentRepository = Depends(get_repository),
 ):
     auth_redirect = _require_auth(request)
     if auth_redirect:
         return auth_redirect
     user = _get_current_user(request)
-    all_incidents = repo.get_all(limit=1000)
+    selected_project = _get_selected_project(request, user)
+    all_incidents = repo.get_all(limit=1000, search=search or None)
+
+    if selected_project:
+        project_scoped_incidents = [
+            incident for incident in all_incidents
+            if _incident_matches_project(incident, selected_project)
+        ]
+        if project_scoped_incidents:
+            all_incidents = project_scoped_incidents
+        else:
+            logger.info(
+                "No project-scoped incident matches found for project '%s' after app/repo/app_names mapping; showing all incidents instead",
+                selected_project.get("name"),
+            )
 
     # Available filter options
     all_severities = ["CRITICAL", "HIGH", "MEDIUM", "LOW"]
     all_statuses = sorted({i.status for i in all_incidents if i.status})
 
-    # Apply filters
+    # Apply severity/status filters (app_name already handled by DB-level ilike)
     filtered = all_incidents
     if severity:
         filtered = [i for i in filtered if (i.severity or "") in severity]
     if status:
         filtered = [i for i in filtered if i.status in status]
-    if app_name:
-        filtered = [i for i in filtered if app_name.lower() in i.app_name.lower()]
+    if app_name and not search:
+        # Only apply Python-side app_name filter when not already done via search
+        filtered = [i for i in filtered if app_name.lower() in (i.app_name or "").lower()]
+
+    integration_summary = _get_project_integration_summary(selected_project)
+    integration_status = _get_project_integration_status(selected_project)
+    available_projects = _get_accessible_projects_with_fallback(user)
 
     return templates.TemplateResponse(
         request,
         "incidents.html",
         {
             "current_user": user,
+            "selected_project": selected_project,
+            "available_projects": available_projects,
+            "integration_summary": integration_summary,
+            "integration_status": integration_status,
             "incidents": filtered,
             "total": len(all_incidents),
             "all_severities": all_severities,
@@ -2196,6 +2908,7 @@ async def incidents_page(
             "filter_severity": severity or [],
             "filter_status": status or [],
             "filter_app": app_name or "",
+            "filter_search": search or "",
             "page": "incidents",
         },
     )
@@ -2214,20 +2927,25 @@ async def incident_detail(
     if not inc:
         raise HTTPException(status_code=404, detail="Incident not found")
 
+    rca_text = _incident_rca_text(inc)
+    fix_text = getattr(inc, "proposed_fix", None) or getattr(inc, "fix_explanation", None)
+
     diff_rows = None
     proposed_fix = getattr(inc, "proposed_fix", None)
     if isinstance(proposed_fix, str) and proposed_fix:
         diff_rows = _build_diff_rows(proposed_fix)
 
     # Workflow steps definition
+    # Patch generation now runs BEFORE approval so the reviewer can download
+    # and test the patch before making their approval decision.
     workflow_steps = [
         ("assess_severity", "Severity Assessment"),
         ("generate_rca", "RCA Generation"),
         ("generate_fix", "Fix Generation"),
         ("generate_pdf", "PDF Generation"),
         ("reflect", "Quality Review"),
-        ("await_approval", "Approval"),
         ("generate_patch", "Patch Generation"),
+        ("await_approval", "Approval"),
         ("send_notifications", "Notifications"),
         ("create_jira", "Jira Creation"),
         ("create_pr", "PR Creation"),
@@ -2237,6 +2955,21 @@ async def incident_detail(
     completed_steps = list(getattr(inc, "workflow_completed_steps", None) or [])
     current_node = getattr(inc, "current_workflow_node", None) or ""
     progress_pct = float(getattr(inc, "workflow_progress_pct", None) or 0.0)
+
+    # Derive a more accurate "current node" display label from the incident's
+    # runtime state.  The DB value (current_workflow_node) may say "finalize"
+    # even when the workflow is actually paused at approval or stalled at PR
+    # creation — override it here so the hero card shows the right step.
+    _status_upper = (getattr(inc, "status", None) or "").upper()
+    _appr_lower = (getattr(inc, "approval_status", None) or "").lower()
+    if _status_upper == "PENDING_APPROVAL" or (_appr_lower == "pending" and not _status_upper.startswith("PR") and _status_upper != "COMPLETED"):
+        current_node = "await_approval"
+    elif _status_upper == "JIRA_CREATED" and not getattr(inc, "pr_url", None):
+        current_node = "create_pr"
+    elif _status_upper == "CREATING_JIRA_PR":
+        current_node = "create_jira_pr"
+    elif _status_upper == "PATCH_GENERATING":
+        current_node = "generate_patch"
     if progress_pct > 1.0:
         progress_pct = progress_pct / 100.0
     progress_pct = min(progress_pct, 1.0)
@@ -2246,48 +2979,228 @@ async def incident_detail(
 
     normalized_completed = [_norm(s) for s in completed_steps]
     has_legacy = "create_jira_pr" in normalized_completed
+    inc_approval_status = getattr(inc, "approval_status", None) or "pending"
 
+    # ── Infer completed steps from actual incident state ──────────────────
+    # The DB field `workflow_completed_steps` can be stale or incomplete when
+    # the workflow progresses without persisting every step transition.  We
+    # augment it by inspecting the real artifacts / fields on the incident so
+    # the Workflow Progress tracker always reflects reality.
+    _inferred_set: set[str] = set(normalized_completed)
+
+    # Severity assessed → severity field is populated
+    if getattr(inc, "severity", None):
+        _inferred_set.add("assess_severity")
+
+    # RCA generated → rca_text is populated
+    if getattr(inc, "rca_text", None):
+        _inferred_set.add("assess_severity")
+        _inferred_set.add("generate_rca")
+
+    # Fix generated → proposed_fix or fix_explanation is populated
+    _has_fix = bool(getattr(inc, "proposed_fix", None) or getattr(inc, "fix_explanation", None))
+    if _has_fix:
+        _inferred_set.add("generate_fix")
+
+    # PDF generated → pdf_path is populated
+    if getattr(inc, "pdf_path", None):
+        _inferred_set.add("generate_pdf")
+
+    # Quality review (reflect) → runs right after fix generation; infer from fix + quality score
+    if _has_fix:
+        _inferred_set.add("reflect")
+
+    # Patch generated → patch_path is populated
+    if getattr(inc, "patch_path", None):
+        _inferred_set.add("generate_patch")
+
+    # Approval done → approval_status recorded
+    if inc_approval_status in ("approved", "rejected"):
+        _inferred_set.add("await_approval")
+
+    # Notifications sent → slack/teams flags, or status indicates we're past that point
+    _post_approval_statuses = {"APPROVED", "JIRA_CREATED", "CREATING_JIRA_PR", "PR_CREATED", "COMPLETED"}
+    if (
+        getattr(inc, "slack_notification_sent", False)
+        or getattr(inc, "teams_notification_sent", False)
+        or _status_upper in _post_approval_statuses
+    ):
+        _inferred_set.add("send_notifications")
+
+    # Jira created → jira_ticket_url / jira_ticket_key is populated, or status is JIRA_CREATED+
+    _has_jira = bool(getattr(inc, "jira_ticket_url", None) or getattr(inc, "jira_ticket_key", None))
+    if _has_jira or _status_upper in {"JIRA_CREATED", "PR_CREATED", "COMPLETED"}:
+        _inferred_set.add("create_jira")
+
+    # PR created → pr_url populated, or status is PR_CREATED/COMPLETED
+    _has_pr = bool(getattr(inc, "pr_url", None))
+    if _has_pr or _status_upper in {"PR_CREATED", "COMPLETED"}:
+        _inferred_set.add("create_pr")
+
+    # Finalized → status is COMPLETED
+    if _status_upper == "COMPLETED":
+        _inferred_set.add("finalize")
+
+    # ── Node display label map ────────────────────────────────────────────
+    _node_label_map = {
+        "assess_severity": "Severity Assessment",
+        "generate_rca": "RCA Generation",
+        "generate_fix": "Fix Generation",
+        "generate_pdf": "PDF Generation",
+        "reflect": "Quality Review",
+        "generate_patch": "Patch Generation",
+        "await_approval": "Awaiting Approval",
+        "send_notifications": "Notifications",
+        "create_jira": "Jira Creation",
+        "create_pr": "PR Creation",
+        "create_jira_pr": "Jira & PR Creation",
+        "finalize": "Finalization",
+    }
+    current_node_label = _node_label_map.get(current_node, current_node.replace("_", " ").title() if current_node else "Waiting")
+
+    # Build enriched steps with strict sequential ordering.
+    #
+    # Rule: a step is only shown as "completed" when every preceding step in the
+    # canonical sequence is also completed.  This prevents stale / accumulated DB
+    # data from showing later steps as complete while earlier ones are still pending.
+    #
+    # The `await_approval` step is special: it pauses the workflow.  While waiting
+    # for a human decision it is shown as "active", and all post-approval steps are
+    # forced to "pending" until the decision is recorded.  Once approved/rejected
+    # the chain continues and post-approval steps are evaluated normally.
     enriched_steps = []
+    sequential_chain_broken = False
+
     for step_id, step_label in workflow_steps:
         norm_id = _norm(step_id)
+
+        # Determine whether this step appears in the completed list.
+        # Use the inferred set which augments stale DB data with actual state.
+        # When the combined create_jira_pr node has run, treat both display
+        # sub-steps (create_jira and create_pr) as individually completed.
         if has_legacy:
-            if step_id == "create_jira":
-                done = True
-            elif step_id == "create_pr":
-                done = False
-            else:
-                done = norm_id in normalized_completed
+            in_completed = True if step_id in ("create_jira", "create_pr") else norm_id in _inferred_set
         else:
-            done = norm_id in normalized_completed
+            in_completed = norm_id in _inferred_set
 
         is_failed = "failed" in current_node.lower()
-        is_active = step_id in current_node and not done
 
-        if done:
-            state = "completed"
-        elif is_active and is_failed:
-            state = "failed"
-        elif is_active:
-            state = "active"
+        if sequential_chain_broken:
+            # All steps after a gap or a pause must remain pending.
+            step_state = "pending"
+
+        elif step_id == "await_approval":
+            # Approval is a pause-point: it can be in completed_steps before a
+            # human has acted (the handler adds it immediately to track progress).
+            if in_completed:
+                if inc_approval_status in ("approved", "rejected"):
+                    step_state = "completed"
+                    # Chain continues — post-approval steps may have run.
+                else:
+                    step_state = "active"  # Waiting for human decision.
+                    sequential_chain_broken = True  # Post-approval steps not yet started.
+            else:
+                step_state = "pending"
+                sequential_chain_broken = True
+
+        elif in_completed:
+            # Step completed and the sequential chain is intact.
+            step_state = "completed"
+
         else:
-            state = "pending"
+            # Step has not completed yet — mark active if it is the current node,
+            # otherwise pending.  Either way, break the sequential chain so that
+            # no later step can be shown as completed.
+            is_active = step_id in current_node
+            # PR Creation stuck: JIRA_CREATED status means the workflow ran through
+            # create_pr but could not create a PR (missing content, repo, etc.).
+            # Show as "failed" rather than "active" so the operator can diagnose.
+            pr_creation_stuck = (
+                step_id == "create_pr"
+                and _status_upper == "JIRA_CREATED"
+                and not getattr(inc, "pr_url", None)
+            )
+            if is_active and (is_failed or pr_creation_stuck):
+                step_state = "failed"
+            elif is_active:
+                step_state = "active"
+            else:
+                step_state = "pending"
+            sequential_chain_broken = True
 
         enriched_steps.append(
-            {"id": step_id, "label": step_label, "state": state}
+            {"id": step_id, "label": step_label, "state": step_state}
         )
+
+    pdf_artifact = _build_artifact_info(getattr(inc, "pdf_path", None), "pdf", incident_id)
+    patch_artifact = _build_artifact_info(getattr(inc, "patch_path", None), "patch", incident_id)
+    incident_links = _build_incident_links(inc, pdf_artifact, patch_artifact)
+    timeline_events = _build_incident_timeline(inc, pdf_artifact, patch_artifact)
+    workflow_improvements = _workflow_improvements(inc, pdf_artifact, patch_artifact)
+
+    # Integration status for the active project — used to conditionally show
+    # delivery channels (e.g. Teams) only when they are actually configured.
+    user = _get_current_user(request)
+    selected_project = _get_selected_project(request, user)
+    integration_status = _get_project_integration_status(selected_project)
 
     return templates.TemplateResponse(
         request,
         "incident_detail.html",
         {
             "inc": inc,
+            "rca_text": rca_text,
+            "fix_text": fix_text,
             "diff_rows": diff_rows,
             "workflow_steps": enriched_steps,
             "progress_pct": int(progress_pct * 100),
             "current_node": current_node,
+            "current_node_label": current_node_label,
             "is_failed": "failed" in current_node.lower(),
+            "pdf_artifact": pdf_artifact,
+            "patch_artifact": patch_artifact,
+            "incident_links": incident_links,
+            "timeline_events": timeline_events,
+            "workflow_improvements": workflow_improvements,
+            "teams_configured": integration_status.get("teams", False),
+            "slack_configured": integration_status.get("slack", False),
             "page": "incidents",
         },
+    )
+
+
+@app.get("/incidents/{incident_id}/artifacts/{artifact_kind}")
+async def incident_artifact(
+    request: Request,
+    incident_id: str,
+    artifact_kind: str,
+    download: int = Query(default=0),
+    repo: IncidentRepository = Depends(get_repository),
+):
+    auth_redirect = _require_auth(request)
+    if auth_redirect:
+        return auth_redirect
+
+    inc = repo.get_by_id(incident_id)
+    if not inc:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    if artifact_kind == "pdf":
+        artifact = _build_artifact_info(getattr(inc, "pdf_path", None), "pdf", incident_id)
+        media_type = "application/pdf"
+    elif artifact_kind == "patch":
+        artifact = _build_artifact_info(getattr(inc, "patch_path", None), "patch", incident_id)
+        media_type = mimetypes.guess_type(getattr(inc, "patch_path", "") or "")[0] or "text/plain"
+    else:
+        raise HTTPException(status_code=404, detail="Artifact type not supported")
+
+    if not artifact:
+        raise HTTPException(status_code=404, detail="Artifact not available")
+
+    return FileResponse(
+        path=artifact["path"],
+        media_type=media_type,
+        filename=artifact["name"] if download else None,
     )
 
 
@@ -2306,8 +3219,7 @@ async def settings_page(
         return RedirectResponse(url="/admin/dashboard", status_code=302)
     # Redirect team_admin to their project configure page instead
     if role == "team_admin":
-        uid = (user or {}).get("user_id", "")
-        my_projects = get_user_projects(uid) if (_AUTH_AVAILABLE and uid) else []
+        my_projects = _get_accessible_projects_with_fallback(user)
         if my_projects:
             return RedirectResponse(url=f"/team-admin/onboarding?project_id={my_projects[0]['id']}", status_code=302)
         return RedirectResponse(url="/team-admin/dashboard", status_code=302)
@@ -2362,27 +3274,162 @@ async def api_health():
 
 @app.get("/api/stats")
 async def api_stats(repo: IncidentRepository = Depends(get_repository)):
-    incidents = repo.get_all(limit=1000)
-    return _compute_stats(incidents)
+    """Return aggregate statistics using efficient SQL COUNT queries."""
+    try:
+        stats = repo.get_stats()
+        # Normalise keys for backward compat with the existing dashboard template
+        return {
+            "total": stats["total_incidents"],
+            "total_incidents": stats["total_incidents"],
+            "critical": stats["by_severity"].get("CRITICAL", 0),
+            "high": stats["by_severity"].get("HIGH", 0),
+            "medium": stats["by_severity"].get("MEDIUM", 0),
+            "low": stats["by_severity"].get("LOW", 0),
+            "pending_approval": stats["pending_approval"],
+            "prs_created": stats["prs_created"],
+            "jira_created": stats["jira_created"],
+            "completed": stats["completed"],
+            "with_rca": stats["with_rca"],
+            "by_severity": stats["by_severity"],
+            "by_status": stats["by_status"],
+        }
+    except Exception:
+        # Fallback to Python aggregation if SQL method fails
+        incidents = repo.get_all(limit=1000)
+        return _compute_stats(incidents)
 
 
 @app.get("/api/incidents")
 async def api_incidents(
-    severity: Optional[str] = None,
-    status: Optional[str] = None,
+    request: Request,
+    severity: Optional[List[str]] = Query(default=None),
+    status: Optional[List[str]] = Query(default=None),
     app_name: Optional[str] = None,
+    search: Optional[str] = None,
     limit: int = Query(default=100, le=500),
     offset: int = 0,
     repo: IncidentRepository = Depends(get_repository),
 ):
+    auth_redirect = _require_auth(request)
+    if auth_redirect:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+
+    user = _get_current_user(request)
+    selected_project = _get_selected_project(request, user)
+
     incidents = repo.get_all(
-        limit=limit,
-        offset=offset,
-        severity=severity,
-        status=status,
-        app_name=app_name,
+        limit=max(limit + offset, 1000),
+        search=search or None,
     )
+
+    if selected_project:
+        project_scoped_incidents = [
+            incident for incident in incidents
+            if _incident_matches_project(incident, selected_project)
+        ]
+        if project_scoped_incidents:
+            incidents = project_scoped_incidents
+
+    if severity:
+        severity_set = {value for value in severity if value}
+        incidents = [incident for incident in incidents if (incident.severity or "") in severity_set]
+
+    if status:
+        status_set = {value for value in status if value}
+        incidents = [incident for incident in incidents if (incident.status or "") in status_set]
+
+    if app_name and not search:
+        incidents = [incident for incident in incidents if app_name.lower() in (incident.app_name or "").lower()]
+
+    incidents = incidents[offset: offset + limit]
     return [_incident_to_dict(i) for i in incidents]
+
+
+# ── CSV Export (must be defined BEFORE /{incident_id} to avoid route conflict) ─
+
+@app.get("/api/incidents/export.csv")
+async def api_export_incidents_csv(
+    request: Request,
+    severity: Optional[List[str]] = Query(default=None),
+    status: Optional[List[str]] = Query(default=None),
+    app_name: Optional[str] = None,
+    search: Optional[str] = None,
+    repo: IncidentRepository = Depends(get_repository),
+):
+    """
+    Stream all matching incidents as a CSV file.
+
+    Supports the same filters as the incidents list page:
+    severity, status, app_name, search.
+    """
+    import csv
+    import io
+
+    auth_redirect = _require_auth(request)
+    if auth_redirect:
+        return auth_redirect
+
+    user = _get_current_user(request)
+    selected_project = _get_selected_project(request, user)
+
+    incidents = repo.get_all(limit=10000, search=search)
+
+    if selected_project:
+        project_scoped_incidents = [
+            incident for incident in incidents
+            if _incident_matches_project(incident, selected_project)
+        ]
+        if project_scoped_incidents:
+            incidents = project_scoped_incidents
+
+    if severity:
+        severity_set = {value for value in severity if value}
+        incidents = [incident for incident in incidents if (incident.severity or "") in severity_set]
+
+    if status:
+        status_set = {value for value in status if value}
+        incidents = [incident for incident in incidents if (incident.status or "") in status_set]
+
+    if app_name and not search:
+        incidents = [incident for incident in incidents if app_name.lower() in (incident.app_name or "").lower()]
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    writer.writerow([
+        "incident_id", "app_name", "environment", "severity", "status",
+        "error_title", "rca_confidence", "fix_quality_score",
+        "approval_status", "jira_ticket_key", "jira_ticket_url",
+        "pr_url", "fix_branch", "created_at", "updated_at",
+    ])
+
+    for inc in incidents:
+        writer.writerow([
+            getattr(inc, "incident_id", ""),
+            getattr(inc, "app_name", ""),
+            getattr(inc, "environment", ""),
+            getattr(inc, "severity", ""),
+            getattr(inc, "status", ""),
+            getattr(inc, "error_title", ""),
+            getattr(inc, "rca_confidence", ""),
+            getattr(inc, "fix_quality_score", ""),
+            getattr(inc, "approval_status", ""),
+            getattr(inc, "jira_ticket_key", ""),
+            getattr(inc, "jira_ticket_url", ""),
+            getattr(inc, "pr_url", ""),
+            getattr(inc, "fix_branch", ""),
+            _fmt_dt(getattr(inc, "created_at", None)),
+            _fmt_dt(getattr(inc, "updated_at", None)),
+        ])
+
+    csv_content = output.getvalue()
+    filename = f"prism_incidents_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
+
+    return StreamingResponse(
+        iter([csv_content]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/api/incidents/{incident_id}")
@@ -2447,24 +3494,92 @@ async def form_approve(
 
 @app.post("/api/incidents/{incident_id}/trigger")
 async def api_trigger_workflow(
+    request: Request,
     incident_id: str,
     repo: IncidentRepository = Depends(get_repository),
 ):
-    """Trigger / re-trigger the LangGraph workflow for an incident."""
+    """Trigger / re-trigger the LangGraph workflow for an incident.
+
+    Blocked for incidents that are already approved, completed, or have a PR
+    created — re-running the full workflow from scratch on such incidents would
+    overwrite the approval decision and reset the status to PENDING_APPROVAL.
+    """
     inc = repo.get_by_id(incident_id)
     if not inc:
         raise HTTPException(status_code=404, detail="Incident not found")
 
+    # Guard: refuse to re-run the full workflow on approved / terminal incidents
+    _protected_statuses = {"APPROVED", "PR_CREATED", "COMPLETED", "JIRA_CREATED", "REJECTED"}
+    _protected_approval = {"approved", "rejected"}
+    current_status = str(getattr(inc, "status", "") or "").upper()
+    current_approval = str(getattr(inc, "approval_status", "") or "").lower()
+
+    if current_status in _protected_statuses or current_approval in _protected_approval:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Incident {incident_id} is in a protected state "
+                f"(status={current_status}, approval_status={current_approval}). "
+                "Re-triggering the full workflow would erase the approval decision. "
+                "Use the /continue-post-approval endpoint to resume post-approval steps."
+            ),
+        )
+
     try:
         from agents.workflow import run_workflow_for_incident
 
+        user = _get_current_user(request)
+        selected_project = _get_selected_project(request, user)
+        selected_project_id = selected_project.get("id") if selected_project else None
+
         loop = asyncio.get_event_loop()
-        loop.run_in_executor(None, run_workflow_for_incident, incident_id)
+        loop.run_in_executor(None, run_workflow_for_incident, incident_id, selected_project_id)
         return {"ok": True, "message": f"Workflow triggered for {incident_id}"}
     except ImportError:
         raise HTTPException(status_code=501, detail="Workflow module not available")
     except Exception as exc:
         logger.error("Workflow trigger error: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/api/incidents/{incident_id}/continue-post-approval")
+async def api_continue_post_approval(
+    request: Request,
+    incident_id: str,
+    repo: IncidentRepository = Depends(get_repository),
+):
+    """
+    Continue post-approval workflow for an approved incident.
+    Called automatically from the UI after the user clicks 'Approve'.
+    Runs: patch generation → notifications → Jira → PR → finalize.
+    """
+    inc = repo.get_by_id(incident_id)
+    if not inc:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    approval_status = getattr(inc, "approval_status", None)
+    if approval_status != "approved":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Incident is not approved (approval_status={approval_status}). Approve first.",
+        )
+
+    try:
+        from agents.workflow import run_post_approval_workflow
+
+        user = _get_current_user(request)
+        selected_project = _get_selected_project(request, user)
+        selected_project_id = selected_project.get("id") if selected_project else None
+
+        loop = asyncio.get_event_loop()
+        loop.run_in_executor(None, run_post_approval_workflow, incident_id, selected_project_id)
+
+        logger.info("Post-approval workflow started for incident %s", incident_id)
+        return {"ok": True, "message": f"Post-approval workflow started for {incident_id}"}
+    except ImportError:
+        raise HTTPException(status_code=501, detail="Workflow module not available")
+    except Exception as exc:
+        logger.error("Post-approval workflow error for %s: %s", incident_id, exc, exc_info=True)
         raise HTTPException(status_code=500, detail=str(exc))
 
 
@@ -2478,6 +3593,347 @@ async def api_clear_incidents(repo: IncidentRepository = Depends(get_repository)
     db.query(IncidentModel).delete()
     db.commit()
     return {"ok": True, "deleted": count}
+
+
+# ── Bulk Actions ──────────────────────────────────────────────────────────────
+
+@app.post("/api/incidents/bulk-approve")
+async def api_bulk_approve(
+    request: Request,
+    repo: IncidentRepository = Depends(get_repository),
+):
+    """
+    Bulk approve or reject multiple incidents in a single request.
+
+    Request body:
+    {
+      "incident_ids": ["XXXX", "YYYY"],
+      "action": "approve" | "reject",
+      "notes": "optional reviewer comment"
+    }
+
+    Returns per-incident success/failure results.
+    """
+    auth_redirect = _require_auth(request)
+    if auth_redirect:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+
+    incident_ids = body.get("incident_ids") or []
+    action = (body.get("action") or "").strip().lower()
+    notes = (body.get("notes") or "").strip()
+
+    if not incident_ids:
+        return JSONResponse({"error": "incident_ids is required"}, status_code=400)
+    if action not in ("approve", "reject"):
+        return JSONResponse({"error": "action must be 'approve' or 'reject'"}, status_code=400)
+    if len(incident_ids) > 100:
+        return JSONResponse({"error": "Maximum 100 incidents per bulk operation"}, status_code=400)
+
+    results: list[dict] = []
+    approved_at = datetime.utcnow()
+
+    for incident_id in incident_ids:
+        try:
+            inc = repo.get_by_id(str(incident_id))
+            if not inc:
+                results.append({"incident_id": incident_id, "ok": False, "error": "Not found"})
+                continue
+
+            updates: dict = {"approval_notes": notes or None, "approved_at": approved_at}
+            if action == "approve":
+                updates["approval_status"] = "approved"
+                updates["status"] = IncidentStatus.APPROVED.value
+            else:
+                updates["approval_status"] = "rejected"
+                updates["status"] = IncidentStatus.REJECTED.value
+
+            repo.update(str(incident_id), **updates)
+
+            # Broadcast SSE event
+            await _broadcast("approval", {"incident_id": incident_id, "action": action, "notes": notes})
+            results.append({"incident_id": incident_id, "ok": True, "action": action})
+
+        except Exception as exc:
+            logger.error("bulk-approve error for %s: %s", incident_id, exc)
+            results.append({"incident_id": incident_id, "ok": False, "error": str(exc)})
+
+    succeeded = sum(1 for r in results if r["ok"])
+    failed = len(results) - succeeded
+
+    return JSONResponse({
+        "ok": True,
+        "action": action,
+        "total": len(results),
+        "succeeded": succeeded,
+        "failed": failed,
+        "results": results,
+    })
+
+
+# ── Analytics — Trend Data ────────────────────────────────────────────────────
+
+@app.get("/api/analytics/trends")
+async def api_analytics_trends(
+    days: int = Query(default=14, ge=1, le=90),
+    repo: IncidentRepository = Depends(get_repository),
+):
+    """
+    Return daily incident trend data and MTTR stats for the last N days.
+
+    Response shape:
+    {
+      "trends": [{"date": "2026-06-01", "total": 5, "approved": 3, "rejected": 1, "acceptance_rate": 60.0}, ...],
+      "mttr": {"mttr_minutes": 12.4, "sample_size": 18},
+      "summary": {"total_incidents": 42, "by_severity": {...}, ...}
+    }
+    """
+    trends = repo.get_daily_trends(days=days)
+    mttr = repo.get_mttr_stats()
+    stats = repo.get_stats()
+
+    return JSONResponse({
+        "trends": trends,
+        "mttr": mttr,
+        "summary": stats,
+        "days": days,
+    })
+
+
+# ── Fix Re-generation with Reviewer Feedback ─────────────────────────────────
+
+@app.post("/api/incidents/{incident_id}/regenerate-fix")
+async def api_regenerate_fix(
+    request: Request,
+    incident_id: str,
+    repo: IncidentRepository = Depends(get_repository),
+):
+    """
+    Re-generate the fix for a rejected incident, injecting the reviewer's
+    rejection notes as additional context into the fix generation prompt.
+
+    Triggers the full fix → reflect loop in the background.
+
+    Request body (optional):
+    { "feedback": "The fix doesn't handle the null case in line 42" }
+    """
+    auth_redirect = _require_auth(request)
+    if auth_redirect:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+
+    inc = repo.get_by_id(incident_id)
+    if not inc:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    feedback = (body.get("feedback") or getattr(inc, "approval_notes", "") or "").strip()
+
+    # Store the feedback as a new regeneration note
+    existing_notes = getattr(inc, "approval_notes", "") or ""
+    regen_note = f"[Re-generation requested] {feedback}" if feedback else "[Re-generation requested]"
+    combined_notes = f"{existing_notes}\n{regen_note}".strip() if existing_notes else regen_note
+
+    # Reset approval status so fix flows back through approval
+    repo.update(
+        incident_id,
+        approval_status="pending",
+        approval_notes=combined_notes,
+        proposed_fix=None,
+        fix_explanation=None,
+        patch_path=None,
+    )
+
+    # Run the fix regeneration in the background via executor
+    async def _run_regen():
+        try:
+            from agents.nodes.fix_generator import generate_fix_node
+            from agents.nodes.reflector import reflect_on_fix_node
+            from agents.state import create_initial_state
+            from storage.database import get_session as _get_sess
+
+            with _get_sess() as session:
+                fresh_repo = IncidentRepository(session)
+                fresh_inc = fresh_repo.get_by_id(incident_id)
+                if not fresh_inc:
+                    return
+
+                state = create_initial_state(
+                    incident_id=incident_id,
+                    app_name=str(fresh_inc.app_name or ""),
+                    environment=str(fresh_inc.environment or ""),
+                    error_title=str(fresh_inc.error_title or ""),
+                    error_description=str(fresh_inc.error_description or ""),
+                    stack_trace=str(fresh_inc.stack_trace or ""),
+                    raw_log=str(fresh_inc.raw_log or ""),
+                    fingerprint=str(getattr(fresh_inc, "error_fingerprint", "") or ""),
+                    severity=str(fresh_inc.severity or "HIGH"),
+                    is_duplicate=False,
+                    created_at=str(getattr(fresh_inc, "created_at", "") or ""),
+                    metadata=getattr(fresh_inc, "incident_metadata", None),
+                )
+
+            # Inject existing RCA and code context
+            with _get_sess() as session:
+                fresh_repo = IncidentRepository(session)
+                fresh_inc = fresh_repo.get_by_id(incident_id)
+                if fresh_inc:
+                    state["rca_text"] = getattr(fresh_inc, "rca_text", None)
+                    state["repo_full_name"] = getattr(fresh_inc, "repo_full_name", None)
+                    state["error_file_path"] = getattr(fresh_inc, "error_file_path", None)
+                    state["error_line_number"] = getattr(fresh_inc, "error_line_number", None)
+                    state["error_file_type"] = getattr(fresh_inc, "error_file_type", None)
+                    state["original_code"] = getattr(fresh_inc, "fetched_code", None)
+
+            # Inject reviewer feedback into RCA context so fix generator sees it
+            if feedback:
+                existing_rca = state.get("rca_text") or ""
+                state["rca_text"] = (
+                    existing_rca
+                    + f"\n\n---\n**Reviewer Feedback for Re-generation:**\n{feedback}\n---"
+                )
+
+            # Determine project_id
+            from agents.workflow import _resolve_project_id_for_incident
+            project_id = _resolve_project_id_for_incident(
+                None,
+                state.get("app_name"),
+                state.get("environment"),
+            )
+            state["project_id"] = project_id
+
+            # Re-run fix generation and reflection
+            state = generate_fix_node(state)
+            state = reflect_on_fix_node(state)
+
+            logger.info("[Regen] Fix regenerated for incident %s", incident_id)
+
+        except Exception as exc:
+            logger.error("[Regen] Fix regeneration failed for %s: %s", incident_id, exc)
+
+    loop = asyncio.get_event_loop()
+    loop.create_task(_run_regen())
+
+    return JSONResponse({
+        "ok": True,
+        "incident_id": incident_id,
+        "message": "Fix re-generation started. Check the incident page for updated results.",
+        "feedback_applied": bool(feedback),
+    })
+
+
+# ── Incident Comment Thread ───────────────────────────────────────────────────
+
+@app.get("/api/incidents/{incident_id}/comments")
+async def api_get_comments(
+    request: Request,
+    incident_id: str,
+    repo: IncidentRepository = Depends(get_repository),
+):
+    """
+    Return all comments for an incident thread, ordered oldest-first.
+
+    Response:
+    {
+      "incident_id": "XXXX",
+      "comments": [{"comment_id": "...", "author": "...", "content": "...", ...}],
+      "count": 3
+    }
+    """
+    auth_redirect = _require_auth(request)
+    if auth_redirect:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+
+    inc = repo.get_by_id(incident_id)
+    if not inc:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    comments = repo.get_comments(incident_id)
+    return JSONResponse({
+        "incident_id": incident_id,
+        "comments": [repo.serialize_comment(c) for c in comments],
+        "count": len(comments),
+    })
+
+
+@app.post("/api/incidents/{incident_id}/comments", status_code=201)
+async def api_add_comment(
+    request: Request,
+    incident_id: str,
+    repo: IncidentRepository = Depends(get_repository),
+):
+    """
+    Add a comment to an incident thread.
+
+    Request body:
+    { "content": "This looks like a connection pool exhaustion issue." }
+
+    Returns the created comment.
+    """
+    auth_redirect = _require_auth(request)
+    if auth_redirect:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+
+    inc = repo.get_by_id(incident_id)
+    if not inc:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+
+    content = (body.get("content") or "").strip()
+    if not content:
+        return JSONResponse({"error": "content is required"}, status_code=400)
+    if len(content) > 4000:
+        return JSONResponse({"error": "Comment must be ≤ 4000 characters"}, status_code=400)
+
+    # Get author from the current session user
+    user = _get_current_user(request)
+    author = (user or {}).get("username") or (user or {}).get("email") or "user"
+
+    comment = repo.add_comment(
+        incident_id=incident_id,
+        content=content,
+        author=author,
+        comment_type="comment",
+    )
+
+    # Broadcast SSE so the incident detail page can refresh comments live
+    await _broadcast("comment", {
+        "incident_id": incident_id,
+        "comment_id": comment.comment_id,
+        "author": comment.author,
+    })
+
+    return JSONResponse(repo.serialize_comment(comment), status_code=201)
+
+
+@app.delete("/api/incidents/{incident_id}/comments/{comment_id}")
+async def api_delete_comment(
+    request: Request,
+    incident_id: str,
+    comment_id: str,
+    repo: IncidentRepository = Depends(get_repository),
+):
+    """Delete a specific comment (only for admin / team_admin roles)."""
+    redir = _require_role(request, "admin", "team_admin")
+    if redir:
+        return JSONResponse({"error": "Unauthorized"}, status_code=403)
+
+    ok = repo.delete_comment(comment_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Comment not found")
+
+    return JSONResponse({"ok": True, "deleted": comment_id})
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -2526,6 +3982,65 @@ async def app_health_page(request: Request):
     user = _get_current_user(request)
     selected_project = _get_selected_project(request, user)
     integration_status = _get_project_integration_status(selected_project)
+    observability_data = _load_live_observability_data(selected_project)
+    metrics_rows = observability_data["metrics_rows"]
+    incidents = observability_data["incidents"]
+
+    service_health_rows = []
+    for metric in metrics_rows:
+        related_incidents = [
+            inc for inc in incidents
+            if getattr(inc, "app_name", None) == metric["app"]
+            and getattr(inc, "environment", None) == metric["environment"]
+        ]
+        error_rate = float(metric["error_rate"])
+        if error_rate >= 5:
+            status = "down"
+        elif error_rate >= 1:
+            status = "degraded"
+        else:
+            status = "healthy"
+
+        latency_ms = int(metric["p95_latency_ms"])
+        uptime_pct = round(max(0.0, min(99.99, 100.0 - (error_rate * 1.8))), 1)
+        latest_incident = None
+        if related_incidents:
+            latest_incident = max(
+                related_incidents,
+                key=lambda inc: getattr(inc, "updated_at", None) or getattr(inc, "created_at", None) or datetime.min,
+            )
+
+        service_health_rows.append(
+            {
+                "name": metric["app"],
+                "environment": metric["environment"],
+                "status": status,
+                "uptime": uptime_pct,
+                "latency": latency_ms,
+                "error_rate": error_rate,
+                "incidents": len(related_incidents),
+                "last_incident": _fmt_dt(
+                    getattr(latest_incident, "updated_at", None) or getattr(latest_incident, "created_at", None)
+                ) if latest_incident else "—",
+            }
+        )
+
+    if not service_health_rows and selected_project:
+        service_health_rows.append(
+            {
+                "name": selected_project.get("name", "selected-project"),
+                "environment": selected_project.get("environment", "unknown"),
+                "status": "healthy",
+                "uptime": 100.0,
+                "latency": 0,
+                "error_rate": 0.0,
+                "incidents": 0,
+                "last_incident": "—",
+            }
+        )
+
+    readiness = _build_demo_readiness(selected_project)
+
     return templates.TemplateResponse(
         request,
         "app_health.html",
@@ -2533,6 +4048,14 @@ async def app_health_page(request: Request):
             "current_user": user,
             "selected_project": selected_project,
             "integration_status": integration_status,
+            "service_health_rows": service_health_rows,
+            "health_summary": {
+                "healthy": sum(1 for row in service_health_rows if row["status"] == "healthy"),
+                "degraded": sum(1 for row in service_health_rows if row["status"] == "degraded"),
+                "down": sum(1 for row in service_health_rows if row["status"] == "down"),
+                "avg_latency": round(sum(row["latency"] for row in service_health_rows) / len(service_health_rows)) if service_health_rows else 0,
+            },
+            "readiness": readiness,
             "page": "app_health",
         },
     )
@@ -2586,19 +4109,7 @@ async def traces_page(request: Request):
     user = _get_current_user(request)
     selected_project = _get_selected_project(request, user)
     integration_status = _get_project_integration_status(selected_project)
-    traces = _sample_trace_rows(selected_project)
-    trace_summary = {
-        "total_traces": len(traces),
-        "error_traces": sum(1 for item in traces if item["status"] == "error"),
-        "slow_traces": sum(1 for item in traces if item["status"] == "slow"),
-        "median_latency_ms": 780,
-        "environments": sorted({item["environment"] for item in traces}),
-    }
-    failed_spans = [
-        {"name": "http:request /sap/orders", "count": 14, "system": "SAP"},
-        {"name": "db:select customer-profile", "count": 9, "system": "Customer DB"},
-        {"name": "jms:publish invoice-events", "count": 7, "system": "Anypoint MQ"},
-    ]
+    observability_data = _load_live_observability_data(selected_project)
     return templates.TemplateResponse(
         request,
         "traces.html",
@@ -2606,9 +4117,9 @@ async def traces_page(request: Request):
             "current_user": user,
             "selected_project": selected_project,
             "integration_status": integration_status,
-            "trace_summary": trace_summary,
-            "traces": traces,
-            "failed_spans": failed_spans,
+            "trace_summary": observability_data["trace_summary"],
+            "traces": observability_data["traces"],
+            "failed_spans": observability_data["failed_spans"],
             "page": "traces",
         },
     )
@@ -2622,15 +4133,7 @@ async def metrics_page(request: Request):
     user = _get_current_user(request)
     selected_project = _get_selected_project(request, user)
     integration_status = _get_project_integration_status(selected_project)
-    metrics_rows = _sample_metrics_rows(selected_project)
-    metrics_summary = {
-        "requests_per_min": sum(item["requests_per_min"] for item in metrics_rows),
-        "error_rate": round(sum(item["error_rate"] for item in metrics_rows) / len(metrics_rows), 1),
-        "p95_latency_ms": max(item["p95_latency_ms"] for item in metrics_rows),
-        "worker_cpu": round(sum(item["cpu"] for item in metrics_rows) / len(metrics_rows)),
-        "environments": sorted({item["environment"] for item in metrics_rows}),
-    }
-    top_error_apps = sorted(metrics_rows, key=lambda item: item["error_rate"], reverse=True)[:3]
+    observability_data = _load_live_observability_data(selected_project)
     return templates.TemplateResponse(
         request,
         "metrics.html",
@@ -2638,9 +4141,9 @@ async def metrics_page(request: Request):
             "current_user": user,
             "selected_project": selected_project,
             "integration_status": integration_status,
-            "metrics_summary": metrics_summary,
-            "metrics_rows": metrics_rows,
-            "top_error_apps": top_error_apps,
+            "metrics_summary": observability_data["metrics_summary"],
+            "metrics_rows": observability_data["metrics_rows"],
+            "top_error_apps": observability_data["top_error_apps"],
             "page": "metrics",
         },
     )
@@ -2654,15 +4157,7 @@ async def api_analytics_page(request: Request):
     user = _get_current_user(request)
     selected_project = _get_selected_project(request, user)
     integration_status = _get_project_integration_status(selected_project)
-    analytics_rows = _sample_api_analytics_rows(selected_project)
-    analytics_summary = {
-        "managed_apis": len(analytics_rows),
-        "policy_violations": sum(item["policy_hits"] for item in analytics_rows),
-        "server_errors": 37,
-        "avg_latency_ms": round(sum(item["p95_latency_ms"] for item in analytics_rows) / len(analytics_rows)),
-        "environments": sorted({item["environment"] for item in analytics_rows}),
-    }
-    policy_hotspots = sorted(analytics_rows, key=lambda item: item["policy_hits"], reverse=True)[:3]
+    observability_data = _load_live_observability_data(selected_project)
     return templates.TemplateResponse(
         request,
         "api_analytics.html",
@@ -2670,9 +4165,9 @@ async def api_analytics_page(request: Request):
             "current_user": user,
             "selected_project": selected_project,
             "integration_status": integration_status,
-            "analytics_summary": analytics_summary,
-            "analytics_rows": analytics_rows,
-            "policy_hotspots": policy_hotspots,
+            "analytics_summary": observability_data["analytics_summary"],
+            "analytics_rows": observability_data["analytics_rows"],
+            "policy_hotspots": observability_data["policy_hotspots"],
             "page": "api_analytics",
         },
     )
@@ -2686,14 +4181,7 @@ async def audit_page(request: Request):
     user = _get_current_user(request)
     selected_project = _get_selected_project(request, user)
     integration_status = _get_project_integration_status(selected_project)
-    audit_rows = _sample_audit_rows(selected_project)
-    audit_summary = {
-        "total_events": len(audit_rows),
-        "failures": sum(1 for item in audit_rows if item["outcome"] == "failure"),
-        "warnings": sum(1 for item in audit_rows if item["outcome"] == "warning"),
-        "sources": sorted({item["source"] for item in audit_rows}),
-    }
-    failed_integrations = [item for item in audit_rows if item["outcome"] == "failure"][:3]
+    observability_data = _load_live_observability_data(selected_project)
     return templates.TemplateResponse(
         request,
         "audit.html",
@@ -2701,9 +4189,9 @@ async def audit_page(request: Request):
             "current_user": user,
             "selected_project": selected_project,
             "integration_status": integration_status,
-            "audit_summary": audit_summary,
-            "audit_rows": audit_rows,
-            "failed_integrations": failed_integrations,
+            "audit_summary": observability_data["audit_summary"],
+            "audit_rows": observability_data["audit_rows"],
+            "failed_integrations": observability_data["failed_integrations"],
             "page": "audit",
         },
     )
@@ -2901,7 +4389,7 @@ async def api_sidebar_apps(repo: IncidentRepository = Depends(get_repository)):
     """Return distinct application names from incidents for the app selector."""
     try:
         incidents = repo.get_all(limit=1000)
-        apps = sorted({i.app_name for i in incidents if i.app_name})
+        apps = sorted({str(i.app_name) for i in incidents if getattr(i, "app_name", None) is not None and str(i.app_name).strip()})
         return apps
     except Exception:
         return []
@@ -2931,8 +4419,7 @@ async def api_switch_project(request: Request):
 
     role = (user or {}).get("role", "user")
     if role != "admin":
-        uid = user.get("user_id", "")
-        accessible = [p["id"] for p in get_user_projects(uid)]  # type: ignore[possibly-unbound]
+        accessible = [p["id"] for p in _get_accessible_projects_with_fallback(user)]  # type: ignore[possibly-unbound]
         if project_id not in accessible:
             return JSONResponse({"success": False, "message": "Access denied"}, status_code=403)
 

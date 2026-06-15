@@ -1,110 +1,407 @@
 {% extends "base.html" %}
-
 {% block title %}Incidents — Prism{% endblock %}
 {% block topbar_title %}Incidents{% endblock %}
 
-{% block topbar_actions %}
-<a href="/incidents" class="btn btn-ghost btn-sm">↻ Refresh</a>
-{% endblock %}
-
 {% block content %}
-<div class="page-header">
-  <div>
-    <h1 class="page-title">Incidents</h1>
-    <p class="page-subtitle">{{ incidents|length }} of {{ total }} incidents shown</p>
-  </div>
-</div>
+<div style="display:flex;flex-direction:column;gap:16px;">
 
-<!-- ── Filter bar ──────────────────────────────────────────────────────── -->
-<form method="get" action="/incidents" class="filter-bar" id="filterForm">
-  <div class="filter-group">
-    <label class="filter-label">Severity</label>
-    <div class="filter-checks">
-      {% for sev in all_severities %}
-      <label class="check-chip check-chip--{{ sev | lower }}">
-        <input type="checkbox" name="severity" value="{{ sev }}"
-               {% if sev in filter_severity %}checked{% endif %}>
-        {{ sev }}
-      </label>
-      {% endfor %}
-    </div>
-  </div>
-
-  <div class="filter-group">
-    <label class="filter-label">Status</label>
-    <div class="filter-checks">
-      {% for st in all_statuses %}
-      <label class="check-chip">
-        <input type="checkbox" name="status" value="{{ st }}"
-               {% if st in filter_status %}checked{% endif %}>
-        {{ st.replace('_', ' ') }}
-      </label>
-      {% endfor %}
-    </div>
-  </div>
-
-  <div class="filter-group filter-group--search">
-    <input class="input input-sm" type="text" name="app_name"
-           placeholder="Filter by app name…" value="{{ filter_app }}">
-  </div>
-
-  <div class="filter-actions">
-    <button class="btn btn-primary btn-sm" type="submit">Apply</button>
-    <a class="btn btn-ghost btn-sm" href="/incidents">Clear</a>
-  </div>
-</form>
-
-<!-- ── Incident list ───────────────────────────────────────────────────── -->
-{% if incidents %}
-<div class="incident-list" id="incidentList">
-  {% for inc in incidents %}
-  <a href="/incidents/{{ inc.incident_id }}" class="incident-row" data-id="{{ inc.incident_id }}">
-
-    <div class="incident-row-severity">
-      <span class="badge {{ inc.severity | severity_badge }}">{{ inc.severity or '—' }}</span>
-    </div>
-
-    <div class="incident-row-body">
-      <div class="incident-row-title">{{ inc.error_title or 'Untitled Incident' }}</div>
-      <div class="incident-row-meta">
-        <span class="incident-row-id">{{ inc.incident_id }}</span>
-        <span class="incident-row-sep">·</span>
-        <span class="incident-row-app">{{ inc.app_name }}</span>
-        <span class="incident-row-sep">·</span>
-        <span class="incident-row-time">{{ inc.created_at | fmt_dt }}</span>
-        {% if inc.repo_full_name %}
-        <span class="incident-row-sep">·</span>
-        <span class="incident-row-repo">{{ inc.repo_full_name }}</span>
-        {% endif %}
-        {% if inc.pr_url %}
-        <span class="incident-row-sep">·</span>
-        <a href="{{ inc.pr_url }}" target="_blank" class="incident-row-link" onclick="event.stopPropagation()">PR ↗</a>
-        {% endif %}
-        {% if inc.jira_ticket_url %}
-        <span class="incident-row-sep">·</span>
-        <a href="{{ inc.jira_ticket_url }}" target="_blank" class="incident-row-link" onclick="event.stopPropagation()">Jira ↗</a>
-        {% endif %}
+  <!-- Project + integration toolbar -->
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:18px;flex-wrap:wrap;padding:14px 18px;background:#fff;border:1px solid var(--gray-200);border-radius:14px;box-shadow:var(--shadow-sm);">
+    <div style="display:flex;align-items:flex-start;gap:18px;flex:1;min-width:0;flex-wrap:wrap;">
+      <div style="display:flex;flex-direction:column;gap:6px;min-width:280px;flex:1;">
+        <label for="projectSwitcher" style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--gray-500);">Active Project</label>
+        <select id="projectSwitcher" class="form-select" style="min-height:40px;border-color:#c4b5fd;font-weight:600;color:var(--gray-800);max-width:480px;">
+          {% for project in available_projects %}
+          <option value="{{ project.id }}" {% if selected_project and project.id == selected_project.id %}selected{% endif %}>{{ project.name }}</option>
+          {% endfor %}
+        </select>
+        {% if selected_project %}<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">{% if selected_project.repo_url %}<span style="font-size:.74rem;color:var(--gray-400);">{{ selected_project.repo_url }}</span>{% endif %}</div>{% endif %}
       </div>
-    </div>
-
-    <div class="incident-row-status">
-      <span class="badge {{ inc.status | status_badge }}">{{ (inc.status or 'UNKNOWN').replace('_', ' ') }}</span>
-      {% if inc.approval_status == 'pending' %}
-      <span class="badge badge-warning" style="margin-top:4px;">Needs Review</span>
+      {% if integration_summary %}
+      <div style="display:flex;flex-direction:column;gap:6px;min-width:240px;flex:1;">
+        <div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--gray-500);">Integrations</div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;">
+          {% for intg in integration_summary %}
+          {% if intg.live %}<div style="display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:10px;border:1px solid #bbf7d0;background:#f0fdf4;"><span style="width:7px;height:7px;border-radius:50%;background:#16a34a;"></span><span style="font-size:.76rem;font-weight:700;color:#166534;">{{ intg.label }}</span>{% if intg.meta %}<span style="font-size:.68rem;color:#14532d;">{{ intg.meta }}</span>{% endif %}</div>
+          {% else %}<div style="display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:10px;border:1px solid #bfdbfe;background:#eff6ff;"><span style="width:7px;height:7px;border-radius:50%;background:#2563eb;"></span><span style="font-size:.76rem;font-weight:700;color:#1e40af;">{{ intg.label }}</span></div>{% endif %}
+          {% endfor %}
+        </div>
+      </div>
       {% endif %}
     </div>
+    <div style="display:flex;gap:10px;flex-shrink:0;">
+      <div style="min-width:82px;padding:10px 14px;border:1px solid var(--gray-200);border-radius:12px;background:var(--gray-50);text-align:center;">
+        <div style="font-size:1.3rem;font-weight:800;color:var(--gray-900);line-height:1;">{{ incidents|length }}</div>
+        <div style="font-size:.65rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:.05em;margin-top:4px;">Visible</div>
+      </div>
+      <div style="min-width:82px;padding:10px 14px;border:1px solid var(--gray-200);border-radius:12px;background:var(--gray-50);text-align:center;">
+        <div style="font-size:1.3rem;font-weight:800;color:var(--gray-900);line-height:1;">{{ total }}</div>
+        <div style="font-size:.65rem;color:var(--gray-500);text-transform:uppercase;letter-spacing:.05em;margin-top:4px;">Total</div>
+      </div>
+    </div>
+  </div>
 
-  </a>
-  {% endfor %}
+  <!-- Filters + search -->
+  <form method="get" action="/incidents" id="filterForm"
+    style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 16px;background:#fff;border:1px solid var(--gray-200);border-radius:12px;box-shadow:var(--shadow-sm);">
+    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+      <span style="font-size:.72rem;font-weight:700;color:var(--gray-500);">Severity</span>
+      {% for sev in all_severities %}
+      <label style="display:inline-flex;align-items:center;gap:4px;padding:4px 8px;border:1px solid var(--gray-200);border-radius:9999px;background:#fff;font-size:.73rem;font-weight:600;color:var(--gray-700);cursor:pointer;">
+        <input type="checkbox" name="severity" value="{{ sev }}" {% if sev in filter_severity %}checked{% endif %} style="accent-color:var(--prism-600);">{{ sev }}
+      </label>
+      {% endfor %}
+    </div>
+    <div style="width:1px;height:22px;background:var(--gray-200);"></div>
+    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+      <span style="font-size:.72rem;font-weight:700;color:var(--gray-500);">Status</span>
+      {% for st in all_statuses %}
+      <label style="display:inline-flex;align-items:center;gap:4px;padding:4px 8px;border:1px solid var(--gray-200);border-radius:9999px;background:#fff;font-size:.73rem;font-weight:600;color:var(--gray-700);cursor:pointer;">
+        <input type="checkbox" name="status" value="{{ st }}" {% if st in filter_status %}checked{% endif %} style="accent-color:var(--prism-600);">{{ st.replace('_', ' ') }}
+      </label>
+      {% endfor %}
+    </div>
+    <div style="width:1px;height:22px;background:var(--gray-200);"></div>
+    <input class="input" type="text" name="app_name" placeholder="App name…" value="{{ filter_app }}" style="min-width:110px;max-width:150px;">
+    <input class="input" type="text" name="search" id="searchInput" placeholder="🔍 Search title, RCA, stack…" value="{{ filter_search or '' }}" style="min-width:180px;flex:1;max-width:280px;" title="Search error title, description, RCA text, stack trace">
+    <button class="btn btn-primary btn-sm" type="submit">Apply</button>
+    <a class="btn btn-ghost btn-sm" href="/incidents">Clear</a>
+    <a id="exportCsvBtn" href="/api/incidents/export.csv" class="btn btn-ghost btn-sm" style="white-space:nowrap;" title="Download as CSV">⬇ Export CSV</a>
+  </form>
+
+  <!-- Bulk Actions Bar -->
+  <div id="bulkActionBar" style="display:none;align-items:center;gap:12px;padding:10px 16px;background:#faf5ff;border:1px solid #d8b4fe;border-radius:12px;">
+    <span id="bulkCountLabel" style="font-size:.82rem;font-weight:700;color:var(--prism-700);">0 selected</span>
+    <div style="flex:1;"></div>
+    <input type="text" id="bulkNotesInput" placeholder="Optional review notes…" style="min-width:180px;padding:6px 10px;border:1px solid var(--gray-300);border-radius:8px;font-size:.82rem;flex:1;max-width:300px;">
+    <button class="btn btn-primary btn-sm" onclick="bulkAction('approve')">✅ Approve Selected</button>
+    <button class="btn btn-ghost btn-sm" onclick="bulkAction('reject')" style="color:#dc2626;border-color:#fca5a5;">❌ Reject Selected</button>
+    <button class="btn btn-ghost btn-sm" onclick="clearBulkSelection()">✕ Clear</button>
+  </div>
+
+  {% if incidents %}
+  <div style="display:flex;align-items:center;gap:8px;padding:2px 2px;">
+    <label style="display:inline-flex;align-items:center;gap:6px;font-size:.77rem;font-weight:600;color:var(--gray-600);cursor:pointer;">
+      <input type="checkbox" id="selectAllCb" onchange="toggleSelectAll(this.checked)" style="accent-color:var(--prism-600);width:14px;height:14px;">
+      Select all visible
+    </label>
+    <span style="font-size:.71rem;color:var(--gray-400);">— enables bulk approve / reject</span>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:10px;">
+    {% for inc in incidents %}
+    <div style="display:flex;align-items:flex-start;gap:10px;">
+      <div style="padding-top:20px;flex-shrink:0;">
+        <input type="checkbox" class="incident-cb" data-id="{{ inc.incident_id }}" onchange="onIncidentCbChange()" style="accent-color:var(--prism-600);width:14px;height:14px;cursor:pointer;">
+      </div>
+      <a href="/incidents/{{ inc.incident_id }}"
+        data-incident-id="{{ inc.incident_id }}"
+        data-incident-status="{{ inc.status or '' }}"
+        data-approval-status="{{ inc.approval_status or '' }}"
+        data-current-node="{{ inc.current_workflow_node or '' }}"
+        data-workflow-progress="{{ inc.workflow_progress_pct or '' }}"
+        style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:16px 20px;border:1px solid var(--gray-200);border-radius:14px;background:#fff;box-shadow:var(--shadow-sm);text-decoration:none;color:inherit;transition:border-color .15s,box-shadow .15s;flex:1;"
+        onmouseover="this.style.borderColor='#d8b4fe';this.style.boxShadow='var(--shadow-md)';"
+        onmouseout="this.style.borderColor='var(--gray-200)';this.style.boxShadow='var(--shadow-sm)';">
+        <div style="min-width:0;flex:1;display:flex;flex-direction:column;gap:8px;">
+          <div style="display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap;">
+            <span class="badge {{ inc.severity | severity_badge }}">{{ inc.severity or '—' }}</span>
+            <span style="font-size:.95rem;font-weight:700;color:var(--gray-900);line-height:1.35;">{{ inc.error_title or 'Untitled Incident' }}</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:.73rem;color:var(--gray-500);">
+            <span style="font-family:var(--font-mono);font-weight:700;color:var(--gray-700);">{{ inc.incident_id }}</span>
+            {% if inc.app_name %}<span style="padding:2px 7px;border-radius:9999px;background:var(--gray-50);border:1px solid var(--gray-200);">{{ inc.app_name }}</span>{% endif %}
+            <span style="padding:2px 7px;border-radius:9999px;background:var(--gray-50);border:1px solid var(--gray-200);">{{ inc.created_at | fmt_dt }}</span>
+            {% if inc.environment %}<span style="padding:2px 7px;border-radius:9999px;background:var(--gray-50);border:1px solid var(--gray-200);">{{ inc.environment }}</span>{% endif %}
+            {% if inc.rca_confidence is not none %}<span style="padding:2px 7px;border-radius:9999px;background:#f0fdf4;border:1px solid #bbf7d0;color:#15803d;font-weight:700;">{{ "%.0f"|format(inc.rca_confidence * 100) }}% conf.</span>{% endif %}
+          </div>
+        </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px;flex-shrink:0;min-width:130px;">
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end;">
+              {% set normalized_status = (inc.status or 'UNKNOWN').upper() %}
+              {% set normalized_approval = (inc.approval_status or '').lower() %}
+              {% set has_primary_status = normalized_status not in ['', 'UNKNOWN'] %}
+              {% set show_secondary_approval = normalized_approval in ['pending', 'approved', 'rejected'] and normalized_status not in ['PENDING_APPROVAL', 'APPROVED', 'REJECTED', 'COMPLETED', 'PR_CREATED'] %}
+              <span class="badge {{ inc.status | status_badge }} incident-status-badge">{{ (inc.status or 'UNKNOWN').replace('_', ' ') }}</span>
+              {% if show_secondary_approval %}
+                {% if normalized_approval == 'pending' %}<span class="badge badge-warning">Needs Review</span>{% endif %}
+                {% if normalized_approval == 'approved' %}<span class="badge badge-success">Approved</span>{% endif %}
+                {% if normalized_approval == 'rejected' %}<span class="badge badge-error">Rejected</span>{% endif %}
+              {% endif %}
+            </div>
+            <div class="incident-activity-slot" style="display:flex;align-items:center;gap:6px;justify-content:flex-end;flex-wrap:wrap;">
+            {% set current_node = (inc.current_workflow_node or '').replace('_', ' ').title() %}
+            {% set progress_pct = inc.workflow_progress_pct %}
+            {% if progress_pct is number and progress_pct <= 1 %}
+              {% set progress_pct = progress_pct * 100 %}
+            {% endif %}
+            {% set show_processing = normalized_status in ['ANALYZING', 'RCA_COMPLETE', 'FIX_GENERATED', 'APPROVED', 'PATCH_GENERATING', 'CREATING_JIRA_PR'] %}
+            {% if show_processing %}
+            <span class="incident-processing-indicator" style="display:inline-flex;align-items:center;gap:6px;padding:3px 8px;border-radius:9999px;background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8;font-size:.68rem;font-weight:700;">
+              <span style="width:7px;height:7px;border-radius:50%;background:#2563eb;animation:prismPulse 1.6s infinite;"></span>
+              <span class="incident-processing-text">
+                {% if normalized_status == 'PATCH_GENERATING' %}Generating Patch
+                {% elif normalized_status == 'CREATING_JIRA_PR' %}Creating Jira & PR
+                {% elif normalized_status == 'APPROVED' %}Post-approval running
+                {% elif current_node %}{{ current_node }}
+                {% else %}Processing{% endif %}
+                {% if progress_pct is number %} · {{ "%.0f"|format(progress_pct) }}%{% endif %}
+              </span>
+            </span>
+            {% endif %}
+            {% if inc.pr_url %}<span style="padding:3px 8px;border-radius:9999px;background:#f5f3ff;border:1px solid #ddd6fe;color:var(--prism-700);font-size:.68rem;font-weight:700;">PR</span>{% endif %}
+            {% if inc.jira_ticket_url %}<span style="padding:3px 8px;border-radius:9999px;background:#f5f3ff;border:1px solid #ddd6fe;color:var(--prism-700);font-size:.68rem;font-weight:700;">Jira</span>{% endif %}
+            </div>
+          </div>
+      </a>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <div class="empty-state-icon">🔍</div>
+    <div class="empty-state-title">No incidents match your filters</div>
+    <div class="empty-state-desc">Try broadening the filters, clearing the search, or switching to another project.</div>
+    <a href="/incidents" class="btn btn-primary" style="margin-top:16px;">Clear filters</a>
+  </div>
+  {% endif %}
 </div>
+{% endblock %}
 
-{% else %}
-<div class="empty-state">
-  <div class="empty-state-icon">🔍</div>
-  <div class="empty-state-title">No incidents match your filters</div>
-  <div class="empty-state-desc">Try adjusting or clearing the filters above.</div>
-  <a href="/incidents" class="btn btn-primary" style="margin-top: var(--space-4);">Clear filters</a>
-</div>
-{% endif %}
+{% block extra_js %}
+<script>
+const INCIDENT_REFRESH_INTERVAL_MS = 5000;
 
+function normalizeStatusLabel(value) {
+  return String(value || 'UNKNOWN').replace(/_/g, ' ');
+}
+
+function normalizeNodeLabel(value) {
+  return String(value || '').replace(/_/g, ' ').trim();
+}
+
+function statusBadgeClass(status) {
+  var normalized = String(status || '').toUpperCase();
+  var mapping = {
+    COMPLETED: 'badge-success',
+    PR_CREATED: 'badge-success',
+    APPROVED: 'badge-success',
+    PENDING_APPROVAL: 'badge-warning',
+    ANALYZING: 'badge-info',
+    DETECTED: 'badge-info',
+    RCA_COMPLETE: 'badge-info',
+    FIX_GENERATED: 'badge-info',
+    PATCH_GENERATING: 'badge-info',
+    CREATING_JIRA_PR: 'badge-info',
+    REJECTED: 'badge-error',
+    FAILED: 'badge-error'
+  };
+  return mapping[normalized] || 'badge-info';
+}
+
+function shouldShowProcessingIndicator(status, approvalStatus, currentNode) {
+  var normalizedStatus = String(status || '').toUpperCase();
+  // Only show for statuses where the workflow is actively executing.
+  // PENDING_APPROVAL = paused waiting for human — do NOT show as "running".
+  // COMPLETED / REJECTED / FAILED / PR_CREATED = terminal — do NOT show.
+  var activeStatuses = ['ANALYZING', 'RCA_COMPLETE', 'FIX_GENERATED', 'APPROVED', 'PATCH_GENERATING', 'CREATING_JIRA_PR'];
+  return activeStatuses.indexOf(normalizedStatus) >= 0;
+}
+
+function formatProgress(value) {
+  var num = Number(value);
+  if (!isFinite(num)) return null;
+  if (num > 0 && num <= 1) num = num * 100;
+  return Math.max(0, Math.min(100, Math.round(num)));
+}
+
+function renderProcessingText(status, currentNode, progress) {
+  var normalizedStatus = String(status || '').toUpperCase();
+  var nodeLabel = normalizeNodeLabel(currentNode);
+  var base = 'Processing';
+  if (normalizedStatus === 'PATCH_GENERATING') {
+    base = 'Generating Patch';
+  } else if (normalizedStatus === 'CREATING_JIRA_PR') {
+    base = 'Creating Jira & PR';
+  } else if (normalizedStatus === 'APPROVED') {
+    base = 'Post-approval running';
+  } else if (nodeLabel) {
+    base = nodeLabel.charAt(0).toUpperCase() + nodeLabel.slice(1);
+  }
+  if (progress !== null) return base + ' · ' + progress + '%';
+  return base;
+}
+
+function updateIncidentCard(card, incident) {
+  var statusBadge = card.querySelector('.incident-status-badge');
+  if (statusBadge) {
+    statusBadge.className = 'badge ' + statusBadgeClass(incident.status) + ' incident-status-badge';
+    statusBadge.textContent = normalizeStatusLabel(incident.status);
+  }
+
+  var slot = card.querySelector('.incident-activity-slot');
+  if (!slot) return;
+
+  var indicator = slot.querySelector('.incident-processing-indicator');
+  var progress = formatProgress(incident.workflow_progress_pct);
+  if (shouldShowProcessingIndicator(incident.status, incident.approval_status, incident.current_workflow_node)) {
+    if (!indicator) {
+      indicator = document.createElement('span');
+      indicator.className = 'incident-processing-indicator';
+      indicator.style.cssText = 'display:inline-flex;align-items:center;gap:6px;padding:3px 8px;border-radius:9999px;background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8;font-size:.68rem;font-weight:700;';
+      indicator.innerHTML = '<span style="width:7px;height:7px;border-radius:50%;background:#2563eb;animation:prismPulse 1.6s infinite;"></span><span class="incident-processing-text"></span>';
+      slot.insertBefore(indicator, slot.firstChild);
+    }
+    var text = indicator.querySelector('.incident-processing-text');
+    if (text) text.textContent = renderProcessingText(incident.status, incident.current_workflow_node, progress);
+  } else if (indicator) {
+    indicator.remove();
+  }
+
+  card.dataset.incidentStatus = incident.status || '';
+  card.dataset.approvalStatus = incident.approval_status || '';
+  card.dataset.currentNode = incident.current_workflow_node || '';
+  card.dataset.workflowProgress = incident.workflow_progress_pct || '';
+}
+
+async function refreshIncidentStatuses() {
+  var cards = Array.from(document.querySelectorAll('[data-incident-id]'));
+  if (!cards.length) return;
+
+  var params = new URLSearchParams(window.location.search);
+  params.set('limit', String(Math.max(cards.length, 100)));
+
+  try {
+    var response = await fetch('/api/incidents?' + params.toString(), { headers: { 'Accept': 'application/json' } });
+    if (!response.ok) return;
+    var incidents = await response.json();
+    var byId = {};
+    incidents.forEach(function (incident) { byId[incident.incident_id] = incident; });
+
+    cards.forEach(function (card) {
+      var incidentId = card.dataset.incidentId;
+      var incident = byId[incidentId];
+      if (!incident) return;
+      updateIncidentCard(card, incident);
+    });
+  } catch (e) {
+    console.error('Incident status refresh failed:', e);
+  }
+}
+
+// ── Project switcher ───────────────────────────────────────────────────────
+document.getElementById('projectSwitcher').addEventListener('change', function () {
+  var projectId = this.value;
+  fetch('/api/switch-project', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ project_id: projectId })
+  }).then(function (r) { return r.json(); }).then(function () {
+    window.location.reload();
+  }).catch(function (e) { console.error('Project switch error:', e); });
+});
+
+// ── Export CSV — carry current search params ───────────────────────────────
+(function () {
+  var form = document.getElementById('filterForm');
+  var exportBtn = document.getElementById('exportCsvBtn');
+  if (!form || !exportBtn) return;
+  var params = new URLSearchParams(new FormData(form));
+  // Remove blank values to keep the URL clean
+  Array.from(params.keys()).forEach(function (k) {
+    if (!params.get(k)) params.delete(k);
+  });
+  var qs = params.toString();
+  exportBtn.href = '/api/incidents/export.csv' + (qs ? '?' + qs : '');
+})();
+
+refreshIncidentStatuses();
+window.setInterval(refreshIncidentStatuses, INCIDENT_REFRESH_INTERVAL_MS);
+
+// ── Bulk selection ─────────────────────────────────────────────────────────
+function getSelectedIds() {
+  return Array.from(document.querySelectorAll('.incident-cb:checked')).map(function (cb) {
+    return cb.dataset.id;
+  });
+}
+
+function updateBulkBar() {
+  var ids = getSelectedIds();
+  var bar = document.getElementById('bulkActionBar');
+  var label = document.getElementById('bulkCountLabel');
+  if (ids.length > 0) {
+    bar.style.display = 'flex';
+    label.textContent = ids.length + ' selected';
+  } else {
+    bar.style.display = 'none';
+  }
+  var allCb = document.getElementById('selectAllCb');
+  var total = document.querySelectorAll('.incident-cb').length;
+  if (allCb) allCb.indeterminate = ids.length > 0 && ids.length < total;
+  if (allCb) allCb.checked = ids.length === total && total > 0;
+}
+
+function onIncidentCbChange() { updateBulkBar(); }
+
+function toggleSelectAll(checked) {
+  document.querySelectorAll('.incident-cb').forEach(function (cb) { cb.checked = checked; });
+  updateBulkBar();
+}
+
+function clearBulkSelection() {
+  document.querySelectorAll('.incident-cb').forEach(function (cb) { cb.checked = false; });
+  var allCb = document.getElementById('selectAllCb');
+  if (allCb) { allCb.checked = false; allCb.indeterminate = false; }
+  updateBulkBar();
+}
+
+async function bulkAction(action) {
+  var ids = getSelectedIds();
+  if (!ids.length) { alert('No incidents selected.'); return; }
+  var notes = document.getElementById('bulkNotesInput').value.trim();
+  var label = action === 'approve' ? 'Approve' : 'Reject';
+  if (!confirm(label + ' ' + ids.length + ' incident(s)?')) return;
+
+  var btn = document.querySelector('#bulkActionBar button');
+  var originalText = btn ? btn.textContent : '';
+
+  try {
+    const r = await fetch('/api/incidents/bulk-approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ incident_ids: ids, action: action, notes: notes })
+    });
+    const d = await r.json();
+    if (r.ok) {
+      alert(label + 'd ' + d.succeeded + '/' + d.total + ' incidents.' + (d.failed > 0 ? ' ' + d.failed + ' failed.' : ''));
+      // Kick off post-approval workflows for newly approved incidents
+      if (action === 'approve') {
+        for (const res of (d.results || [])) {
+          if (res.ok) {
+            fetch('/api/incidents/' + res.incident_id + '/continue-post-approval', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: '{}'
+            }).catch(function () {});
+          }
+        }
+      }
+      clearBulkSelection();
+      setTimeout(function () { window.location.reload(); }, 800);
+    } else {
+      alert(d.error || 'Bulk action failed');
+    }
+  } catch (e) {
+    alert('Network error: ' + e.message);
+  }
+}
+</script>
+
+<style>
+@keyframes prismPulse {
+  0% { transform: scale(.95); box-shadow: 0 0 0 0 rgba(37,99,235,.35); }
+  70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(37,99,235,0); }
+  100% { transform: scale(.95); box-shadow: 0 0 0 0 rgba(37,99,235,0); }
+}
+</style>
 {% endblock %}

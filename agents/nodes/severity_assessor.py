@@ -111,5 +111,24 @@ def assess_severity_node(state: AgentState) -> AgentState:
             f"Auto-fix NOT triggered: {reason}"
         ]
         logger.info(f"[Severity Assessment] Auto-fix skipped for {state['incident_id']}: {reason}")
-    
+
+    # Send "Incident Created" notification so the team is alerted immediately
+    try:
+        from agents.workflow import _send_event_notification
+        _send_event_notification(
+            event="Incident Created",
+            incident_id=state['incident_id'],
+            severity=severity.value,
+            app_name=state.get('app_name', ''),
+            environment=state.get('environment', ''),
+            details=(
+                f"New incident detected: {state.get('error_title', 'Unknown')}\n"
+                f"Severity: {severity.value}\n"
+                f"Auto-fix: {'triggered' if should_fix else 'not triggered'} — {reason}"
+            ),
+            project_id=state.get('project_id'),
+        )
+    except Exception as _notify_err:
+        logger.warning("[Severity Assessment] Could not send incident-created notification: %s", _notify_err)
+
     return state

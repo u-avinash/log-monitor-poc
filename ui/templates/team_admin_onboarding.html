@@ -40,6 +40,7 @@
         <button class="team-tab-btn" onclick="showTab('tab-github')" id="tabBtn-github">🐙 GitHub</button>
         <button class="team-tab-btn" onclick="showTab('tab-anypoint')" id="tabBtn-anypoint">☁ Anypoint</button>
         <button class="team-tab-btn" onclick="showTab('tab-notify')" id="tabBtn-notify">🔔 Notifications</button>
+        <button class="team-tab-btn" onclick="showTab('tab-repos')" id="tabBtn-repos">📂 Source Code</button>
       </div>
     </div>
   </aside>
@@ -259,7 +260,7 @@
             Status: {% if integration_config.get('runtime') %}Saved configuration{% else %}Ready to save{% endif %}
           </div>
           <div class="admin-form-actions admin-form-actions--split">
-            <button class="btn btn-ghost" id="editBtn-runtime" onclick="toggleRuntimeEditMode()">✏ Edit</button>
+            <div class="integration-verification-note">Project configuration is editable directly on this page.</div>
             <button class="btn btn-primary" id="saveBtn-runtime" onclick="saveRuntimeConfig()">💾 Save Project Configuration</button>
           </div>
         </div>
@@ -506,7 +507,51 @@
           </div>
         </div>
       </div>
+    </div><!-- END tab-notify -->
+
+    <div id="tab-repos" class="tab-panel" style="display:none;">
+      <div class="card">
+        <div class="card-header admin-card-header">
+          <div>
+            <h2 class="card-title">Source Code Configuration</h2>
+            <p class="card-subtitle">
+              Set the GitHub organisation and default branch to use for source code fetching.
+              Repository names are resolved <strong>automatically</strong> from the application name
+              in the incoming telemetry log — no manual app-to-repo mapping is needed.
+            </p>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="integration-verification-note" style="margin-bottom:1rem;">
+            ℹ️ When an incident arrives, Prism reads the <strong>app name</strong> from the log,
+            searches the configured GitHub organisation for a matching repository, and fetches the
+            source file automatically. Only the organisation name and the branch to read from are
+            required here.
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="srcOrg">GitHub Organisation / Owner *</label>
+              <input class="form-input" id="srcOrg" type="text"
+                placeholder="my-org"
+                value="{{ integration_config.get('github', {}).get('org', '') }}" />
+              <div class="form-hint">The GitHub organisation or user account that owns the application repositories (e.g. <code>avinash-ai-langchain</code>).</div>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="srcBranch">Default Branch</label>
+              <input class="form-input" id="srcBranch" type="text"
+                placeholder="main"
+                value="{{ integration_config.get('github', {}).get('default_branch', 'main') }}" />
+              <div class="form-hint">Branch to read source files from (e.g. <code>main</code> or <code>develop</code>).</div>
+            </div>
+          </div>
+          <div class="admin-form-actions" style="margin-top:1rem;">
+            <button class="btn btn-primary" onclick="saveSourceCodeConfig()">💾 Save Source Code Config</button>
+          </div>
+          <div id="sourceCodeConfigStatus" style="margin-top:0.5rem;font-size:13px;color:var(--text-muted,#6b7280);"></div>
+        </div>
+      </div>
     </div>
+
   </section>
 </div>
 
@@ -538,7 +583,7 @@
 
 {% block extra_js %}
 <script>
-var runtimeEditMode = false;
+var runtimeEditMode = true;
 
 var verificationState = {
   llm: false,
@@ -794,25 +839,20 @@ function setRuntimeEditMode(editable) {
   ].forEach(function (id) {
     var el = document.getElementById(id);
     if (el) {
-      el.disabled = !editable;
+      el.disabled = false;
     }
   });
 
-  var editBtn = document.getElementById('editBtn-runtime');
   var saveBtn = document.getElementById('saveBtn-runtime');
   var statusEl = document.getElementById('runtimeConfigState');
 
-  if (editBtn) {
-    editBtn.textContent = editable ? 'Cancel' : '✏ Edit';
-  }
-
   if (saveBtn) {
-    saveBtn.style.display = editable ? '' : 'none';
+    saveBtn.style.display = '';
   }
 
   if (statusEl) {
     if (editable) {
-      statusEl.textContent = 'Status: Editing';
+      statusEl.textContent = 'Status: Ready to edit and save';
       statusEl.classList.remove('table-primary');
     } else {
       statusEl.textContent = 'Status: Saved configuration';
@@ -822,7 +862,7 @@ function setRuntimeEditMode(editable) {
 }
 
 function toggleRuntimeEditMode() {
-  setRuntimeEditMode(!runtimeEditMode);
+  setRuntimeEditMode(true);
 }
 
 function getSelectedProjectId() {
@@ -937,8 +977,9 @@ function setIntegrationButtons(type, verified) {
     verifyBtn.classList.toggle('btn-ghost', !verified);
   }
 
+  // Save is always enabled in edit mode — verification is recommended but not mandatory
   if (saveBtn) {
-    saveBtn.disabled = !verified;
+    saveBtn.disabled = false;
   }
 }
 
@@ -980,8 +1021,8 @@ function setIntegrationEditMode(type, editable) {
     setVerifyState(type, true, 'Saved configuration');
   } else {
     verificationState[type] = false;
-    setVerifyState(type, false, 'Editing — verify before saving');
-    if (saveBtn) saveBtn.disabled = true;
+    setVerifyState(type, false, 'Editing — verification optional');
+    if (saveBtn) saveBtn.disabled = false;
   }
 
   toggleCustomProvider();
@@ -1159,8 +1200,8 @@ async function deleteIntegration(type) {
 async function saveIntegration(type) {
   if (!validateIntegrationFields(type)) return;
   if (!verificationState[type]) {
-    alert('Please verify this configuration before saving.');
-    return;
+    var proceed = confirm('This configuration has not been verified yet. Save anyway?');
+    if (!proceed) return;
   }
 
   try {
@@ -1250,6 +1291,81 @@ function switchProjectContext(projectId) {
   });
 }
 
+// ── Repo Mappings ─────────────────────────────────────────────────────────
+var _repoMappings = {{ (integration_config.get('repo_mappings') or {})|tojson }};
+
+function renderRepoMappingRows() {
+  var container = document.getElementById('repoMappingRows');
+  container.innerHTML = '';
+  Object.keys(_repoMappings).forEach(function(appName) {
+    var val = _repoMappings[appName] || {};
+    container.appendChild(_buildRepoMappingRow(appName, val.repo || '', val.branch || 'main', val.description || ''));
+  });
+}
+
+function _buildRepoMappingRow(appName, repo, branch, description) {
+  var row = document.createElement('div');
+  row.className = 'form-row repo-mapping-row';
+  row.style.cssText = 'align-items:flex-end;margin-bottom:0.5rem;';
+  row.innerHTML = [
+    '<div class="form-group" style="flex:1.2">',
+    '  <label class="form-label">App Name</label>',
+    '  <input class="form-input repo-app-name" type="text" value="' + _esc(appName) + '" placeholder="order-processing-service"/>',
+    '</div>',
+    '<div class="form-group" style="flex:2">',
+    '  <label class="form-label">Repository (org/repo)</label>',
+    '  <input class="form-input repo-repo" type="text" value="' + _esc(repo) + '" placeholder="my-org/my-repo"/>',
+    '</div>',
+    '<div class="form-group" style="flex:0.8">',
+    '  <label class="form-label">Branch</label>',
+    '  <input class="form-input repo-branch" type="text" value="' + _esc(branch) + '" placeholder="main"/>',
+    '</div>',
+    '<div class="form-group" style="flex:1.2">',
+    '  <label class="form-label">Description</label>',
+    '  <input class="form-input repo-description" type="text" value="' + _esc(description) + '" placeholder="Optional"/>',
+    '</div>',
+    '<div style="flex:0 0 auto;padding-bottom:0.3rem;">',
+    '  <button class="btn btn-ghost btn-sm" onclick="this.closest(\'.repo-mapping-row\').remove()" title="Remove">🗑</button>',
+    '</div>',
+  ].join('');
+  return row;
+}
+
+function _esc(s) {
+  var d = document.createElement('div');
+  d.appendChild(document.createTextNode(String(s || '')));
+  return d.innerHTML.replace(/"/g, '"');
+}
+
+function addRepoMappingRow() {
+  document.getElementById('repoMappingRows').appendChild(_buildRepoMappingRow('', '', 'main', ''));
+}
+
+async function saveSourceCodeConfig() {
+  var projectId = getSelectedProjectId();
+  if (!projectId) { alert('Please select a project first.'); return; }
+  var org = (document.getElementById('srcOrg').value || '').trim();
+  var branch = (document.getElementById('srcBranch').value || '').trim() || 'main';
+  if (!org) { alert('GitHub Organisation / Owner is required.'); return; }
+  var statusEl = document.getElementById('sourceCodeConfigStatus');
+  statusEl.textContent = 'Saving...';
+  try {
+    const r = await fetch('/api/team-admin/integration/github', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_id: projectId, org: org, default_branch: branch })
+    });
+    const d = await r.json();
+    if (r.ok && d.success) {
+      statusEl.textContent = 'Saved. Org: ' + org + ' | Branch: ' + branch;
+    } else {
+      statusEl.textContent = 'Error: ' + (d.error || 'Unknown error');
+    }
+  } catch(e) {
+    statusEl.textContent = 'Network error: ' + e.message;
+  }
+}
+
 document.addEventListener('DOMContentLoaded', function () {
   toggleMemberMode();
   toggleCustomProvider();
@@ -1300,8 +1416,7 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   });
 
-  runtimeEditMode = !document.getElementById('runtimeConfigState').textContent.includes('Saved configuration');
-  setRuntimeEditMode(runtimeEditMode);
+  setRuntimeEditMode(true);
 
   var hash = window.location.hash ? window.location.hash.substring(1) : '';
   if (hash && document.getElementById(hash)) {

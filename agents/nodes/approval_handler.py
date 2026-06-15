@@ -2,7 +2,7 @@
 import logging
 from datetime import datetime
 import time
-from agents.state import AgentState
+from agents.state import AgentState, WORKFLOW_TOTAL_STEPS
 from storage.database import get_session
 from storage.incident_repository import IncidentRepository
 
@@ -35,8 +35,8 @@ def await_approval_node(state: AgentState) -> AgentState:
         with get_session() as session:
             repo = IncidentRepository(session)
             update_data = {
-                'status': 'pending_approval',
-                'rca': state.get('rca_text'),
+                'status': 'PENDING_APPROVAL',
+                'rca_text': state.get('rca_text'),
                 'proposed_fix': state.get('proposed_fix'),
                 'fix_explanation': state.get('fix_explanation')
             }
@@ -59,15 +59,14 @@ def await_approval_node(state: AgentState) -> AgentState:
         state['updated_at'] = datetime.utcnow().isoformat()
         
         # Update workflow tracking
-        if 'workflow_completed_steps' not in state:
-            state['workflow_completed_steps'] = []
+        completed_steps = list(state.get('workflow_completed_steps') or [])
         
         # Add step only if not already completed (prevent duplicates)
-        if 'await_approval' not in state['workflow_completed_steps']:
-            state['workflow_completed_steps'].append('await_approval')
+        if 'await_approval' not in completed_steps:
+            completed_steps.append('await_approval')
+        state['workflow_completed_steps'] = completed_steps
         
-        # Calculate progress based on 11 total workflow steps
-        state['workflow_progress_pct'] = len(state['workflow_completed_steps']) / 11.0
+        state['workflow_progress_pct'] = len(completed_steps) / WORKFLOW_TOTAL_STEPS
         
         # Update database with workflow progress
         try:
@@ -88,10 +87,36 @@ def await_approval_node(state: AgentState) -> AgentState:
         ]
         
         logger.info(f"[Approval Handler] Incident {state['incident_id']} awaiting approval")
-        
-        # Note: In POC, workflow pauses here
-        # Continuation happens when user calls POST /incidents/{id}/approve
-        # which will trigger the next phase of the workflow
+
+        # Send a "Pending Approval" notification with a deep-link to the incident UI
+        try:
+            from agents.workflow import _send_event_notification
+            from config.settings import get_settings as _get_settings
+
+            _settings = _get_settings()
+            ui_base_url = getattr(_settings, "ui_base_url", "http://localhost:8080").rstrip("/")
+            incident_url = f"{ui_base_url}/incidents/{state['incident_id']}"
+
+            rca_preview = (state.get('rca_text') or '')[:300]
+            quality_score = state.get('overall_quality_score', 0) or 0
+            recommendation = state.get('quality_recommendation', 'MANUAL_REVIEW') or 'MANUAL_REVIEW'
+
+            _send_event_notification(
+                event="⏸️ Pending Approval — Review Required",
+                incident_id=state['incident_id'],
+                severity=state.get('severity', 'HIGH'),
+                app_name=state.get('app_name', ''),
+                environment=state.get('environment', ''),
+                details=(
+                    f"Incident **{state['incident_id']}** is awaiting human approval.\n"
+                    f"Quality score: {quality_score:.2f}  |  Recommendation: {recommendation}\n\n"
+                    f"**Review & Approve:** {incident_url}\n\n"
+                    f"Root Cause Preview:\n{rca_preview}{'...' if len(rca_preview) >= 300 else ''}"
+                ),
+                project_id=state.get('project_id'),
+            )
+        except Exception as _notify_err:
+            logger.warning("[Approval Handler] Could not send pending-approval notification: %s", _notify_err)
         
     except Exception as e:
         logger.error(f"[Approval Handler] Failed for {state['incident_id']}: {str(e)}")
@@ -121,7 +146,7 @@ def check_approval_status(incident_id: str) -> tuple[bool, str, str]:
     try:
         with get_session() as session:
             repo = IncidentRepository(session)
-            incident = repo.get_incident(incident_id)
+            incident = repo.get_by_id(incident_id)
             
             if not incident:
                 return False, "pending", "Incident not found"

@@ -4,10 +4,8 @@ from typing import Any, Dict
 from pathlib import Path
 from agents.state import AgentState
 from integrations.jira_client import JiraClient
-from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
 
 
 def create_jira_ticket(state: AgentState) -> Dict[str, Any]:
@@ -30,17 +28,17 @@ def create_jira_ticket(state: AgentState) -> Dict[str, Any]:
     logger.info(f"Creating Jira ticket for incident {state.get('incident_id')}")
     
     try:
-        # Initialize Jira client
-        jira_client = JiraClient()
-        
-        if not jira_client.client:
-            logger.warning("Jira client not configured, skipping ticket creation")
+        # Initialize Jira client — raises ValueError if not configured for this project
+        try:
+            jira_client = JiraClient(project_id=state.get("project_id"))
+        except ValueError as cfg_err:
+            logger.warning("Jira not configured, skipping ticket creation: %s", cfg_err)
             state["messages"].append({
                 "role": "system",
-                "content": "Jira ticket creation skipped (not configured)"
+                "content": f"Jira ticket creation skipped: {cfg_err}",
             })
             return state
-        
+
         # Extract incident details
         incident_id = state.get("incident_id", 0)
         app_name = state.get("app_name", "Unknown")
@@ -169,13 +167,12 @@ def update_jira_with_rca(state: AgentState) -> Dict[str, Any]:
             logger.warning("Missing ticket key or RCA text, skipping update")
             return state
         
-        # Initialize Jira client
-        jira_client = JiraClient()
-        
-        if not jira_client.client:
-            logger.warning("Jira client not configured")
+        try:
+            jira_client = JiraClient(project_id=state.get("project_id"))
+        except ValueError as cfg_err:
+            logger.warning("Jira not configured, skipping RCA update: %s", cfg_err)
             return state
-        
+
         # Add RCA comment
         success = jira_client.add_rca_update(
             ticket_key=ticket_key,
@@ -199,57 +196,64 @@ def update_jira_with_rca(state: AgentState) -> Dict[str, Any]:
 
 def attach_patch_to_jira(state: AgentState) -> Dict[str, Any]:
     """
-    Attach patch file to Jira ticket.
+    Attach generated artifacts to Jira ticket.
+
+    Currently attaches:
+    - Patch file, when available
+    - RCA PDF report, when available
     
     Args:
-        state: Current agent state with patch_path
+        state: Current agent state with jira ticket and artifact paths
         
     Returns:
         Updated state
     """
-    logger.info(f"Attaching patch file to Jira ticket for incident {state.get('incident_id')}")
+    logger.info(f"Attaching generated artifacts to Jira ticket for incident {state.get('incident_id')}")
     
     try:
         ticket_key = state.get("jira_ticket_key")
-        patch_path = state.get("patch_path")
         
         if not ticket_key:
-            logger.warning("Missing ticket key, skipping patch attachment")
+            logger.warning("Missing ticket key, skipping Jira attachments")
             return state
         
-        if not patch_path or not Path(patch_path).exists():
-            logger.warning(f"Patch file not found: {patch_path}")
-            return state
-        
-        # Initialize Jira client
-        jira_client = JiraClient()
-        
-        if not jira_client.client:
-            logger.warning("Jira client not configured")
-            return state
-        
-        # Attach patch file
         try:
-            # The Jira API add_attachment expects: (issue, attachment)
-            # Pass the file path directly, not a file object
-            jira_client.client.add_attachment(ticket_key, patch_path)
-            
-            logger.info(f"Attached patch file to Jira ticket {ticket_key}")
-            state["messages"].append({
-                "role": "system",
-                "content": f"✓ Patch file attached to Jira ticket {ticket_key}"
-            })
-        except Exception as attach_error:
-            logger.error(f"Failed to attach patch: {attach_error}")
-            state["messages"].append({
-                "role": "system",
-                "content": f"⚠️ Failed to attach patch: {str(attach_error)}"
-            })
+            jira_client = JiraClient(project_id=state.get("project_id"))
+        except ValueError as cfg_err:
+            logger.warning("Jira not configured, skipping attachment: %s", cfg_err)
+            return state
+
+        attachments = [
+            ("patch", state.get("patch_path"), "Patch file"),
+            ("pdf", state.get("pdf_path"), "RCA PDF report"),
+        ]
+
+        for artifact_kind, artifact_path, artifact_label in attachments:
+            if not artifact_path or not Path(artifact_path).exists():
+                logger.info("%s not found for Jira attachment: %s", artifact_label, artifact_path)
+                continue
+
+            try:
+                # The Jira API add_attachment expects: (issue, attachment)
+                # Pass the file path directly, not a file object.
+                jira_client.client.add_attachment(ticket_key, artifact_path)
+
+                logger.info("Attached %s to Jira ticket %s", artifact_kind, ticket_key)
+                state["messages"].append({
+                    "role": "system",
+                    "content": f"✓ {artifact_label} attached to Jira ticket {ticket_key}"
+                })
+            except Exception as attach_error:
+                logger.error("Failed to attach %s to Jira: %s", artifact_kind, attach_error)
+                state["messages"].append({
+                    "role": "system",
+                    "content": f"⚠️ Failed to attach {artifact_label.lower()}: {str(attach_error)}"
+                })
         
         return state
         
     except Exception as e:
-        logger.error(f"Error attaching patch to Jira: {str(e)}")
+        logger.error(f"Error attaching artifacts to Jira: {str(e)}")
         return state
 
 
@@ -273,13 +277,12 @@ def update_jira_with_branch(state: AgentState) -> Dict[str, Any]:
             logger.warning("Missing ticket key or branch name, skipping update")
             return state
         
-        # Initialize Jira client
-        jira_client = JiraClient()
-        
-        if not jira_client.client:
-            logger.warning("Jira client not configured")
+        try:
+            jira_client = JiraClient(project_id=state.get("project_id"))
+        except ValueError as cfg_err:
+            logger.warning("Jira not configured, skipping branch update: %s", cfg_err)
             return state
-        
+
         # Add comment with branch information
         comment_text = f"""🌿 *Fix Branch Created*
 
@@ -333,11 +336,10 @@ def update_jira_with_commit(state: AgentState) -> Dict[str, Any]:
             logger.warning("Missing ticket key or commit SHA, skipping update")
             return state
 
-        # Initialize Jira client
-        jira_client = JiraClient()
-
-        if not jira_client.client:
-            logger.warning("Jira client not configured")
+        try:
+            jira_client = JiraClient(project_id=state.get("project_id"))
+        except ValueError as cfg_err:
+            logger.warning("Jira not configured, skipping commit update: %s", cfg_err)
             return state
 
         short_sha = str(commit_sha)[:7]
@@ -394,13 +396,12 @@ def update_jira_with_pr(state: AgentState) -> Dict[str, Any]:
             logger.warning("Missing ticket key or PR URL, skipping update")
             return state
         
-        # Initialize Jira client
-        jira_client = JiraClient()
-        
-        if not jira_client.client:
-            logger.warning("Jira client not configured")
+        try:
+            jira_client = JiraClient(project_id=state.get("project_id"))
+        except ValueError as cfg_err:
+            logger.warning("Jira not configured, skipping PR update: %s", cfg_err)
             return state
-        
+
         # Add comment with PR details
         comment_text = f"""🔀 *Pull Request Created*
 
@@ -456,11 +457,123 @@ Please review at your earliest convenience."""
 def link_jira_to_pr(state: AgentState) -> Dict[str, Any]:
     """
     Link Jira ticket to GitHub PR (legacy function - use update_jira_with_pr).
-    
+
     Args:
         state: Current agent state
-        
+
     Returns:
         Updated state
     """
     return update_jira_with_pr(state)
+
+
+def sync_jira_development_info(state: AgentState) -> Dict[str, Any]:
+    """
+    Sync branch / commit / PR details with the Jira Development panel.
+
+    Calls JiraClient.sync_all_dev_links() which:
+      1. Pushes data to the Jira Software Development Information API
+         (devinfo/0.10) so that branch, commit, and PR appear in the
+         *Development* panel on the Jira ticket — enabling one-click
+         navigation from Jira to GitHub.
+      2. Falls back to remote web links (visible under *Web links* even
+         when the Jira↔GitHub marketplace app is not installed).
+
+    This function is idempotent: it can be called multiple times safely
+    as Jira deduplicates by repository-id + object-id.
+
+    Args:
+        state: Current agent state — must contain jira_ticket_key and
+               repo_full_name for anything useful to happen.
+
+    Returns:
+        Updated state with sync result logged in messages.
+    """
+    logger.info(
+        "Syncing development info with Jira for incident %s",
+        state.get("incident_id"),
+    )
+
+    ticket_key = state.get("jira_ticket_key")
+    repo_full_name = state.get("repo_full_name")
+
+    if not ticket_key:
+        logger.debug("sync_jira_development_info: no Jira ticket key, skipping")
+        return state
+
+    if not repo_full_name:
+        logger.debug("sync_jira_development_info: no repo_full_name, skipping")
+        return state
+
+    try:
+        try:
+            jira_client = JiraClient(project_id=state.get("project_id"))
+        except ValueError as cfg_err:
+            logger.warning("Jira not configured, skipping dev-info sync: %s", cfg_err)
+            return state
+
+        branch_name = state.get("branch_name") or state.get("fix_branch")
+        commit_sha = state.get("commit_sha")
+        commit_url = state.get("commit_url")
+        pr_url = state.get("pr_url")
+        pr_number = state.get("pr_number")
+        pr_title = None
+        if pr_number:
+            pr_title = (
+                f"[Auto-Fix] Incident #{state.get('incident_id')}: "
+                f"{state.get('error_title', 'Fix')}"
+            )
+
+        # Build the commit message the same way pr_creator does so the
+        # display in Jira matches the actual commit on GitHub.
+        commit_message = None
+        if ticket_key and state.get("error_title"):
+            commit_message = (
+                f"{ticket_key}: Fix: {state.get('error_title', 'auto-generated fix')}"
+            )
+
+        results = jira_client.sync_all_dev_links(
+            ticket_key=ticket_key,
+            repo_full_name=repo_full_name,
+            branch_name=branch_name,
+            commit_sha=commit_sha,
+            commit_url=commit_url,
+            commit_message=commit_message,
+            pr_url=pr_url,
+            pr_number=pr_number,
+            pr_title=pr_title,
+            file_path=state.get("error_file_path"),
+        )
+
+        dev_info_ok = results.get("dev_info", False)
+        links_ok = any(
+            results.get(k) for k in ("branch_link", "commit_link", "pr_link")
+        )
+
+        if dev_info_ok:
+            msg = (
+                f"✓ Development info synced to Jira {ticket_key} "
+                f"(branch={branch_name}, commit={commit_sha}, pr={pr_number})"
+            )
+        elif links_ok:
+            msg = (
+                f"✓ GitHub links added to Jira {ticket_key} as web links "
+                f"(Dev panel sync unavailable — check Jira Software plan)"
+            )
+        else:
+            msg = (
+                f"⚠️ Could not sync development info to Jira {ticket_key} "
+                f"— ensure the Jira Software plan is active and credentials "
+                f"have the required scopes."
+            )
+
+        state["messages"] = state.get("messages", []) + [msg]
+        logger.info(msg)
+
+    except Exception as exc:
+        logger.error(
+            "Error in sync_jira_development_info for incident %s: %s",
+            state.get("incident_id"), exc,
+        )
+
+    return state

@@ -5,12 +5,18 @@ from typing import Optional
 import yaml
 import json
 import re
-from agents.state import AgentState
+from agents.state import AgentState, WORKFLOW_TOTAL_STEPS
 from integrations.llm_provider import LLMProvider
-from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
+
+
+def _safe_prompt_interpolate(template: str, values: dict[str, str]) -> str:
+    """Safely replace known placeholders without interpreting JSON braces."""
+    rendered = template
+    for key, value in values.items():
+        rendered = rendered.replace("{" + key + "}", value)
+    return rendered
 
 
 def _persist_processing_error(incident_id: str, message: str) -> None:
@@ -65,14 +71,23 @@ def reflect_on_fix_node(state: AgentState) -> AgentState:
         else:
             original_code_snippet = original_code
         
-        formatted_prompt = reflection_prompt.format(
-            error_description=state['error_description'],
-            proposed_fix=state.get('proposed_fix', 'No fix generated'),
-            original_code_snippet=original_code_snippet if original_code_snippet else '[No original code available]'
+        formatted_prompt = _safe_prompt_interpolate(
+            reflection_prompt,
+            {
+                'error_description': state['error_description'],
+                'proposed_fix': state.get('proposed_fix', 'No fix generated'),
+                'original_code_snippet': original_code_snippet if original_code_snippet else '[No original code available]',
+            },
         )
         
-        # Initialize LLM provider
-        llm_provider = LLMProvider()
+        # Initialize LLM provider using project-scoped configuration
+        llm_provider = LLMProvider(project_id=state.get('project_id'))
+        logger.info(
+            "[Quality Reflection] Using LLM provider=%s model=%s project_id=%s",
+            llm_provider.provider,
+            llm_provider.model,
+            llm_provider.project_id,
+        )
         
         # Create a clean system message with strong JSON instruction
         system_msg = """You are a senior code reviewer. Critically assess the proposed fix.
@@ -184,18 +199,17 @@ Output ONLY the JSON object. Start with { and end with }."""
                 "Using safe default scores - MANUAL REVIEW REQUIRED"
             ]
             
-            # Update workflow tracking even on failure
-            if 'workflow_completed_steps' not in state:
-                state['workflow_completed_steps'] = []
-            if 'reflect' not in state['workflow_completed_steps']:
-                state['workflow_completed_steps'].append('reflect')
-            state['workflow_progress_pct'] = len(state['workflow_completed_steps']) / 11.0
-            
+            completed_steps = list(state.get('workflow_completed_steps') or [])
+            if 'reflect' not in completed_steps:
+                completed_steps.append('reflect')
+            state['workflow_completed_steps'] = completed_steps
+            state['workflow_progress_pct'] = len(completed_steps) / WORKFLOW_TOTAL_STEPS
+
             # Update database
             try:
                 from storage.database import get_session
                 from storage.incident_repository import IncidentRepository
-                
+
                 with get_session() as session:
                     repo = IncidentRepository(session)
                     repo.update(
@@ -206,7 +220,7 @@ Output ONLY the JSON object. Start with { and end with }."""
                     )
             except Exception as db_error:
                 logger.warning(f"Failed to update workflow progress in DB: {db_error}")
-            
+
             return state
         
         # Parse JSON response with full response logging for debugging
@@ -231,22 +245,20 @@ Output ONLY the JSON object. Start with { and end with }."""
         state['current_node'] = 'reflect'
         state['updated_at'] = datetime.utcnow().isoformat()
         
-        # Update workflow tracking
-        if 'workflow_completed_steps' not in state:
-            state['workflow_completed_steps'] = []
+        completed_steps = list(state.get('workflow_completed_steps') or [])
         
         # Add step only if not already completed (prevent duplicates)
-        if 'reflect' not in state['workflow_completed_steps']:
-            state['workflow_completed_steps'].append('reflect')
+        if 'reflect' not in completed_steps:
+            completed_steps.append('reflect')
+        state['workflow_completed_steps'] = completed_steps
         
-        # Calculate progress based on 11 total workflow steps
-        state['workflow_progress_pct'] = len(state['workflow_completed_steps']) / 11.0
-        
+        state['workflow_progress_pct'] = len(completed_steps) / WORKFLOW_TOTAL_STEPS
+
         # Update database with workflow progress
         try:
             from storage.database import get_session
             from storage.incident_repository import IncidentRepository
-            
+
             with get_session() as session:
                 repo = IncidentRepository(session)
                 repo.update(
@@ -257,7 +269,7 @@ Output ONLY the JSON object. Start with { and end with }."""
                 )
         except Exception as db_error:
             logger.warning(f"Failed to update workflow progress in DB: {db_error}")
-        
+
         # Determine approval path
         overall_score = state['overall_quality_score']
         recommendation = state['quality_recommendation']
@@ -294,14 +306,12 @@ Output ONLY the JSON object. Start with { and end with }."""
         ]
     
     # ALWAYS update workflow tracking, even on error
-    if 'workflow_completed_steps' not in state:
-        state['workflow_completed_steps'] = []
-    
-    if 'reflect' not in state['workflow_completed_steps']:
-        state['workflow_completed_steps'].append('reflect')
-    
-    state['workflow_progress_pct'] = len(state['workflow_completed_steps']) / 11.0
-    
+    completed_steps = list(state.get('workflow_completed_steps') or [])
+    if 'reflect' not in completed_steps:
+        completed_steps.append('reflect')
+    state['workflow_completed_steps'] = completed_steps
+    state['workflow_progress_pct'] = len(completed_steps) / WORKFLOW_TOTAL_STEPS
+
     # Update database with workflow progress
     try:
         from storage.database import get_session
@@ -340,9 +350,11 @@ def _parse_quality_scores(response: str, incident_id: str = "unknown") -> dict:
     Returns:
         Dict with quality scores
     """
+    original_response = response
+    json_str: Optional[str] = None
+
     try:
         # Aggressively clean the response
-        original_response = response
         response = response.strip()
         
         logger.debug(f"[JSON Parse] Original response length: {len(original_response)}")
@@ -484,7 +496,7 @@ def _parse_quality_scores(response: str, incident_id: str = "unknown") -> dict:
         logger.error(f"[JSON Parse] ✗ JSON decode error for {incident_id}: {str(e)}")
         logger.error(f"[JSON Parse] Position: line {e.lineno} column {e.colno}")
         logger.error(f"[JSON Parse] Original response (first 500): {original_response[:500]}")
-        logger.error(f"[JSON Parse] Extracted JSON (first 300): {json_str[:300] if 'json_str' in locals() else 'N/A'}")
+        logger.error(f"[JSON Parse] Extracted JSON (first 300): {json_str[:300] if json_str else 'N/A'}")
         
         # Fallback: attempt to salvage values from truncated/partial JSON using regex.
         # This addresses common failure mode where the provider connection resets mid-response
@@ -531,6 +543,7 @@ def _parse_quality_scores(response: str, incident_id: str = "unknown") -> dict:
     except Exception as e:
         logger.error(f"[JSON Parse] ✗ Unexpected error for {incident_id}: {str(e)}")
         logger.error(f"[JSON Parse] Original response (first 500): {original_response[:500]}")
+        logger.error(f"[JSON Parse] Extracted JSON (first 300): {json_str[:300] if json_str else 'N/A'}")
         return _get_default_scores(f'Unexpected error: {str(e)}')
 
 

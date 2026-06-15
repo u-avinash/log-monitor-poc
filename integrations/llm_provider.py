@@ -1,10 +1,11 @@
-"""Multi-provider LLM wrapper supporting OpenAI, Anthropic, Google, Groq, etc."""
+"""Multi-provider LLM wrapper — credentials loaded exclusively from project DB config."""
 from __future__ import annotations
 
-from typing import Optional, Dict, Any
-
+import json
+import re
 import logging
 import time
+from typing import Optional, Dict, Any
 
 from langchain_core.caches import InMemoryCache
 from langchain_core.globals import set_llm_cache
@@ -12,18 +13,47 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from config.settings import get_settings
-from storage.auth_store import get_project_config, list_projects
 from utils.retry_handler import retry_with_backoff, RateLimitError
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
+def _normalize_response_content(content: Any) -> str:
+    """Normalize provider-specific response content to a plain string."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                text_value = item.get("text")
+                if isinstance(text_value, str):
+                    parts.append(text_value)
+                else:
+                    parts.append(json.dumps(item, ensure_ascii=False))
+            else:
+                parts.append(str(item))
+        return "".join(parts)
+    if isinstance(content, dict):
+        return json.dumps(content, ensure_ascii=False)
+    return str(content)
+
+
 class LLMProvider:
     """
     Multi-provider LLM wrapper with caching and retry logic.
-    Supports: OpenAI, Anthropic, Google, Groq, Together, Ollama, and
-    OpenAI-compatible endpoints configured per project.
+
+    All credentials and model settings are loaded from the per-project DB config
+    (stored encrypted).  No fallback to environment variables or settings.py.
+
+    Supported providers: openai, azure_openai, anthropic, google_gemini,
+    groq, grok/xai, together, ollama, mistral, cohere, deepseek, perplexity,
+    hugging_face, bedrock, custom.
     """
 
     def __init__(
@@ -31,62 +61,66 @@ class LLMProvider:
         provider: Optional[str] = None,
         model: Optional[str] = None,
         project_id: Optional[str] = None,
-        app_name: Optional[str] = None,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
     ):
         """
-        Initialize LLM provider.
+        Initialise LLM provider.
 
-        Args:
-            provider: LLM provider name (defaults to settings or project config)
-            model: Model name (defaults to settings or project config)
-            project_id: Optional project identifier for per-project config
-            app_name: Optional application name used to resolve a project
-            api_key: Optional runtime API key override
-            base_url: Optional runtime endpoint override
-            temperature: Optional runtime temperature override
-            max_tokens: Optional runtime max token override
+        At least one of `project_id` (to load config from DB) or explicit
+        `provider` + `api_key` + `model` must be supplied.  If `project_id`
+        is given, DB values are used as the primary source; explicit kwargs
+        override them.
         """
-        self.project_id = project_id or self._resolve_project_id(app_name)
-        self.project_llm_config = self._load_project_llm_config(self.project_id)
+        self.project_id = project_id
+        project_cfg = self._load_project_llm_config(project_id)
 
-        # Normalize provider to avoid case/alias issues
         resolved_provider = (
             provider
-            or self.project_llm_config.get("provider")
-            or settings.llm_provider
+            or project_cfg.get("provider")
             or ""
-        )
-        self.provider = resolved_provider.strip().lower()
-        self.model = model or self.project_llm_config.get("model") or settings.llm_model
+        ).strip().lower()
+
+        if not resolved_provider:
+            raise ValueError(
+                f"LLM provider is not configured"
+                + (f" for project '{project_id}'" if project_id else "")
+                + ". Configure it via Team Admin → Project Configuration → LLM."
+            )
+
+        self.provider = resolved_provider
+        self.model = model or project_cfg.get("model") or ""
+        if not self.model:
+            raise ValueError(
+                f"LLM model is not configured for provider '{self.provider}'"
+                + (f" in project '{project_id}'" if project_id else "")
+                + ". Configure it via Team Admin → Project Configuration → LLM."
+            )
+
         self.temperature = self._coerce_float(
-            temperature if temperature is not None else self.project_llm_config.get("temperature"),
-            settings.llm_temperature,
+            temperature if temperature is not None else project_cfg.get("temperature"),
+            0.2,
         )
         self.max_tokens = self._coerce_int(
-            max_tokens if max_tokens is not None else self.project_llm_config.get("max_tokens"),
-            settings.llm_max_tokens,
+            max_tokens if max_tokens is not None else project_cfg.get("max_tokens"),
+            4096,
         )
         self.base_url = (
             base_url
-            or self.project_llm_config.get("base_url")
-            or (
-                settings.ollama_base_url
-                if self.provider == "ollama"
-                else None
-            )
+            or project_cfg.get("base_url")
+            or (None)
         )
-        self.api_key = api_key or self.project_llm_config.get("api_key") or self._get_default_api_key(self.provider)
-        self.api_type = (self.project_llm_config.get("api_type") or "").strip().lower()
-        self.api_version = self.project_llm_config.get("api_version") or None
-        self.deployment_name = self.project_llm_config.get("deployment_name") or None
+        self.api_key = api_key or project_cfg.get("api_key") or None
+        self.api_version = project_cfg.get("api_version") or None
+        self.deployment_name = project_cfg.get("deployment_name") or None
+
+        # Validate that credential is present for providers that require it
+        self._validate_configuration()
 
         if settings.llm_cache_enabled:
             set_llm_cache(InMemoryCache())
-            logger.info("LLM caching enabled")
 
         self.llm = self._initialize_llm()
         logger.info(
@@ -96,24 +130,15 @@ class LLMProvider:
             self.project_id,
         )
 
-    def _resolve_project_id(self, app_name: Optional[str]) -> Optional[str]:
-        if not app_name:
-            return None
-
-        normalized_app = app_name.strip().lower()
-        for project in list_projects():
-            project_name = (project.get("name") or "").strip().lower()
-            repo_url = (project.get("repo_url") or "").strip().lower()
-            if normalized_app == project_name or normalized_app in repo_url:
-                return project.get("id")
-        return None
+    # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _load_project_llm_config(self, project_id: Optional[str]) -> dict:
         if not project_id:
             return {}
         try:
+            from storage.auth_store import get_project_config
             config = get_project_config(project_id) or {}
-            return config.get("llm", {}) or {}
+            return config.get("llm") or {}
         except Exception as exc:
             logger.warning("Failed to load project LLM config for %s: %s", project_id, exc)
             return {}
@@ -130,29 +155,31 @@ class LLMProvider:
         except (TypeError, ValueError):
             return int(default)
 
-    def _get_default_api_key(self, provider: str) -> Optional[str]:
-        provider_key = (provider or "").strip().lower()
-        api_key_map = {
-            "openai": settings.openai_api_key,
-            "anthropic": settings.anthropic_api_key,
-            "google": settings.google_api_key,
-            "google_gemini": settings.google_api_key,
-            "groq": settings.groq_api_key,
-            "grok": settings.grok_api_key,
-            "xai": settings.grok_api_key,
-            "x-ai": settings.grok_api_key,
-            "x_ai": settings.grok_api_key,
-            "together": getattr(settings, "together_api_key", None),
-            "together_ai": getattr(settings, "together_api_key", None),
-        }
-        return api_key_map.get(provider_key)
+    def _provider_requires_api_key(self, provider: str) -> bool:
+        return (provider or "").strip().lower() not in {"ollama"}
+
+    def _validate_configuration(self) -> None:
+        if self._provider_requires_api_key(self.provider) and not self.api_key:
+            raise ValueError(
+                f"API key is not configured for LLM provider '{self.provider}'"
+                + (f" in project '{self.project_id}'" if self.project_id else "")
+                + ". Configure it via Team Admin → Project Configuration → LLM."
+            )
+        if self.provider == "azure_openai" and not self.base_url:
+            raise ValueError(
+                "Azure OpenAI requires a base_url (azure_endpoint). "
+                "Configure it via Team Admin → Project Configuration → LLM."
+            )
 
     def _initialize_llm(self) -> BaseChatModel:
-        """Initialize the appropriate LLM client based on provider."""
+        """Initialise the appropriate LLM client based on provider."""
         try:
-            if self.provider in {"openai", "custom", "perplexity", "deepseek", "mistral", "cohere", "hugging_face"}:
+            if self.provider in {
+                "openai", "custom", "perplexity", "deepseek",
+                "mistral", "cohere", "hugging_face",
+            }:
                 from langchain_openai import ChatOpenAI
-                kwargs = {
+                kwargs: dict = {
                     "model": self.model,
                     "temperature": self.temperature,
                     "max_tokens": self.max_tokens,
@@ -235,18 +262,20 @@ class LLMProvider:
                 return ChatOllama(
                     model=self.model,
                     temperature=self.temperature,
-                    base_url=self.base_url or settings.ollama_base_url,
+                    base_url=self.base_url or "http://localhost:11434",
                 )
 
             else:
-                raise ValueError(f"Unsupported LLM provider: {self.provider}")
+                raise ValueError(f"Unsupported LLM provider: '{self.provider}'")
 
-        except ImportError as e:
-            logger.error("Failed to import %s package: %s", self.provider, e)
+        except ImportError as exc:
+            logger.error("Missing package for provider '%s': %s", self.provider, exc)
             raise
-        except Exception as e:
-            logger.error("Failed to initialize %s/%s: %s", self.provider, self.model, e)
+        except Exception as exc:
+            logger.error("Failed to initialise %s/%s: %s", self.provider, self.model, exc)
             raise
+
+    # ── Public API ────────────────────────────────────────────────────────────
 
     @retry_with_backoff(max_retries=3, base_delay=2.0, exceptions=(RateLimitError, ConnectionError))
     def invoke(
@@ -255,99 +284,68 @@ class LLMProvider:
         system_message: Optional[str] = None,
         temperature: Optional[float] = None,
         json_mode: bool = False,
-        **kwargs
+        **kwargs,
     ) -> str:
-        """Invoke LLM with prompt and optional system message."""
+        """Invoke the LLM synchronously and return the response string."""
         try:
             messages = []
             if system_message:
                 messages.append(SystemMessage(content=system_message))
             messages.append(HumanMessage(content=prompt))
 
-            invoke_kwargs = {}
+            invoke_kwargs: dict = {}
             if temperature is not None:
                 invoke_kwargs["temperature"] = temperature
 
-            if json_mode:
-                if self.provider in {"openai", "custom", "perplexity", "deepseek", "mistral", "cohere", "hugging_face"}:
-                    invoke_kwargs["response_format"] = {"type": "json_object"}
-                elif self.provider == "anthropic":
-                    logger.debug("Using prompt-based JSON for Anthropic")
+            if json_mode and self.provider in {
+                "openai", "custom", "perplexity", "deepseek",
+                "mistral", "cohere", "hugging_face",
+            }:
+                invoke_kwargs["response_format"] = {"type": "json_object"}
 
-            logger.debug("LLM invoke: provider=%s model=%s json_mode=%s", self.provider, self.model, json_mode)
-            start_time = time.time()
-
+            logger.debug(
+                "LLM invoke: provider=%s model=%s json_mode=%s",
+                self.provider, self.model, json_mode,
+            )
+            start = time.time()
             response = self.llm.invoke(messages, **invoke_kwargs)
+            response_text = _normalize_response_content(getattr(response, "content", response))
+            elapsed = time.time() - start
+            logger.debug("LLM response in %.2fs, %d chars", elapsed, len(response_text))
 
-            elapsed = time.time() - start_time
-            logger.debug("LLM response received in %.2fs, length=%s chars", elapsed, len(response.content))
-
-            if not response.content:
-                logger.warning("LLM returned empty response")
+            if not response_text:
                 raise ValueError("Empty response from LLM")
 
-            return response.content
+            return response_text
 
-        except ConnectionResetError as e:
-            logger.error("Connection reset by %s: %s", self.provider, str(e))
-            raise ConnectionError(f"Connection reset by {self.provider}: {e}")
+        except ConnectionResetError as exc:
+            raise ConnectionError(f"Connection reset by {self.provider}: {exc}")
 
-        except OSError as e:
-            if "WinError 10054" in str(e) or "connection" in str(e).lower():
-                logger.error("Connection error with %s: %s", self.provider, str(e))
-                raise ConnectionError(f"Connection forcibly closed by {self.provider}: {e}")
+        except OSError as exc:
+            if "WinError 10054" in str(exc) or "connection" in str(exc).lower():
+                raise ConnectionError(f"Connection forcibly closed by {self.provider}: {exc}")
             raise
 
-        except Exception as e:
-            error_msg = str(e)
-            logger.error("LLM invocation failed: provider=%s model=%s error=%s", self.provider, self.model, error_msg)
-
+        except Exception as exc:
+            error_msg = str(exc)
             lower_msg = error_msg.lower()
-            is_rate_limited = (
-                "rate" in lower_msg
-                or "429" in lower_msg
-                or "resource_exhausted" in lower_msg
-                or "quota" in lower_msg
+
+            is_rate_limited = any(
+                token in lower_msg
+                for token in (
+                    "rate", "429", "503", "resource_exhausted",
+                    "quota", "unavailable", "high demand", "overloaded",
+                )
             )
-
             if is_rate_limited:
-                logger.warning("Rate limit / quota exhaustion detected")
-                fallback_provider = getattr(settings, "llm_fallback_provider", "openai")
-                fallback_model = getattr(settings, "llm_fallback_model", "gpt-4o-mini")
-
-                if fallback_provider and fallback_provider != self.provider:
-                    logger.warning(
-                        "Falling back LLM provider from %s/%s to %s/%s",
-                        self.provider,
-                        self.model,
-                        fallback_provider,
-                        fallback_model,
-                    )
-                    try:
-                        fallback_llm = LLMProvider(
-                            provider=fallback_provider,
-                            model=fallback_model,
-                            project_id=self.project_id,
-                        )
-                        return fallback_llm.invoke(
-                            prompt=prompt,
-                            system_message=system_message,
-                            temperature=temperature,
-                            json_mode=json_mode,
-                            **kwargs,
-                        )
-                    except Exception as fallback_e:
-                        logger.error("Fallback LLM invocation failed: %s", fallback_e)
-
-                raise RateLimitError(f"Rate limit / quota exceeded: {e}")
+                logger.warning("Rate limit / quota exhaustion on %s/%s", self.provider, self.model)
+                raise RateLimitError(f"Rate limit / transient provider overload: {exc}")
 
             if "connection" in lower_msg or "timeout" in lower_msg:
-                logger.error("Connection error with %s: %s", self.provider, error_msg)
-                raise ConnectionError(f"Failed to connect to {self.provider}: {e}")
+                raise ConnectionError(f"Failed to connect to {self.provider}: {exc}")
 
             if "auth" in lower_msg or "api key" in lower_msg or "401" in error_msg:
-                logger.error("Authentication error with %s: Check your API key", self.provider)
-                raise ValueError(f"Authentication failed for {self.provider}: {e}")
+                raise ValueError(f"Authentication failed for {self.provider}: {exc}")
 
             raise
 
@@ -355,82 +353,56 @@ class LLMProvider:
         self,
         prompt: str,
         system_message: Optional[str] = None,
-        **kwargs
+        **kwargs,
     ) -> str:
-        """Async invoke LLM with prompt and optional system message."""
-        try:
-            messages = []
-            if system_message:
-                messages.append(SystemMessage(content=system_message))
-            messages.append(HumanMessage(content=prompt))
-
-            response = await self.llm.ainvoke(messages, **kwargs)
-            return response.content
-
-        except Exception as e:
-            if "rate" in str(e).lower() or "429" in str(e):
-                raise RateLimitError(f"Rate limit exceeded: {e}")
-            raise
-
-    def stream(self, prompt: str, system_message: Optional[str] = None):
-        """Stream LLM response."""
+        """Async invoke."""
         messages = []
         if system_message:
             messages.append(SystemMessage(content=system_message))
         messages.append(HumanMessage(content=prompt))
+        response = await self.llm.ainvoke(messages, **kwargs)
+        return _normalize_response_content(getattr(response, "content", response))
 
+    def stream(self, prompt: str, system_message: Optional[str] = None):
+        """Stream LLM response chunks."""
+        messages = []
+        if system_message:
+            messages.append(SystemMessage(content=system_message))
+        messages.append(HumanMessage(content=prompt))
         for chunk in self.llm.stream(messages):
             yield chunk.content
 
     def test_connection(self) -> tuple[bool, str]:
         """Test LLM connection with a simple query."""
         try:
-            logger.info("Testing connection to %s/%s...", self.provider, self.model)
             response = self.invoke(
                 prompt="Respond with only the word 'OK'",
                 system_message="You are a test assistant. Respond with exactly 'OK'.",
                 temperature=0.0,
             )
-
-            if response and len(response.strip()) > 0:
-                logger.info("✓ Connection test passed for %s/%s", self.provider, self.model)
+            if response and response.strip():
                 return True, f"Successfully connected to {self.provider}/{self.model}"
             return False, f"Empty response from {self.provider}"
-
-        except ConnectionError as e:
-            msg = f"Connection failed: {str(e)}"
-            logger.error(msg)
-            return False, msg
-        except ValueError as e:
-            msg = f"Authentication failed: {str(e)}"
-            logger.error(msg)
-            return False, msg
-        except Exception as e:
-            msg = f"Connection test failed: {str(e)}"
-            logger.error(msg)
-            return False, msg
+        except Exception as exc:
+            return False, f"Connection test failed: {exc}"
 
     def test_connection_fast(self, timeout_seconds: float = 10.0) -> tuple[bool, str]:
         """Fast connectivity test without retry/backoff."""
         try:
-            logger.info("Fast-testing connection to %s/%s...", self.provider, self.model)
-
             messages = [
                 SystemMessage(content="You are a test assistant. Respond with exactly 'OK'."),
                 HumanMessage(content="Respond with only the word 'OK'"),
             ]
-
             response = self.llm.invoke(messages, timeout=timeout_seconds)
-
-            text = getattr(response, "content", "") or ""
+            text = _normalize_response_content(getattr(response, "content", response))
             if text.strip():
                 return True, f"Successfully connected to {self.provider}/{self.model}"
             return False, f"Empty response from {self.provider}/{self.model}"
-        except Exception as e:
-            return False, f"Fast connection test failed for {self.provider}/{self.model}: {e}"
+        except Exception as exc:
+            return False, f"Fast connection test failed for {self.provider}/{self.model}: {exc}"
 
     def get_model_info(self) -> Dict[str, Any]:
-        """Get information about the current model."""
+        """Return metadata about the current model configuration."""
         return {
             "provider": self.provider,
             "model": self.model,

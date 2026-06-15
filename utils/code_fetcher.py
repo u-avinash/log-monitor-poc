@@ -9,9 +9,140 @@ logger = logging.getLogger(__name__)
 
 class CodeFetcher:
     """Fetch and analyze code from GitHub for error analysis and fixes."""
-    
-    def __init__(self):
-        self.github_client = GitHubClient()
+
+    def __init__(self, project_id: Optional[str] = None):
+        try:
+            self.github_client = GitHubClient(project_id=project_id)
+        except ValueError as exc:
+            logger.warning("GitHub not configured for project %s — code fetching disabled: %s", project_id, exc)
+            self.github_client = None  # type: ignore[assignment]
+
+    def _normalize_repo_name(self, repo_full_name: str) -> str:
+        """Ensure repo_full_name includes org/owner prefix.
+
+        Only prepends the configured org when:
+        - the value has no '/' (bare repo name), AND
+        - the bare value does NOT equal the org itself (org-only strings are not valid repo names)
+        """
+        if not repo_full_name:
+            return repo_full_name
+        if '/' not in repo_full_name:
+            org = (self.github_client.org or "").strip() if self.github_client else ""
+            # Guard: if the bare name equals the org, it is the org name, not a repo name
+            if org and repo_full_name.lower() != org.lower():
+                normalized = f"{org}/{repo_full_name}"
+                logger.info("[Code Fetch] Normalized repo name: %s → %s", repo_full_name, normalized)
+                return normalized
+            elif org and repo_full_name.lower() == org.lower():
+                logger.warning(
+                    "[Code Fetch] Bare repo name '%s' equals configured org — "
+                    "skipping normalization (need full org/repo)",
+                    repo_full_name,
+                )
+        return repo_full_name
+
+    def _find_file_by_filename(self, repo_full_name: str, filename: str) -> Optional[str]:
+        """Search the repository tree for a file by filename."""
+        if not self.github_client or not filename:
+            return None
+
+        repo_full_name = self._normalize_repo_name(repo_full_name)
+
+        try:
+            repo = self.github_client.client.get_repo(repo_full_name)
+            branch = repo.default_branch
+            tree = repo.get_git_tree(branch, recursive=True)
+
+            preferred_prefixes = [
+                "src/main/mule/",
+                "src/main/app/",
+                "src/main/resources/dataweave/",
+                "src/main/resources/dw/",
+                "src/main/resources/properties/",
+                "src/main/java/",
+            ]
+
+            # Handle truncated trees (repos with > 100,000 entries)
+            tree_items = tree.tree
+            if tree.truncated:
+                logger.warning(
+                    "[Code Fetch] Repository tree truncated for %s — results may be incomplete",
+                    repo_full_name,
+                )
+
+            matches = [
+                item.path for item in tree_items
+                if item.type == "blob" and (
+                    item.path.endswith(f"/{filename}") or item.path == filename
+                )
+            ]
+
+            if not matches:
+                logger.warning("Repository tree search found no match for filename: %s", filename)
+                return None
+
+            for prefix in preferred_prefixes:
+                for match in matches:
+                    if match.startswith(prefix):
+                        logger.info("Repository tree search matched preferred path: %s", match)
+                        return match
+
+            logger.info("Repository tree search matched path: %s", matches[0])
+            return matches[0]
+
+        except Exception as exc:
+            logger.warning("Repository tree search failed for %s/%s: %s", repo_full_name, filename, exc)
+            return None
+
+    def fetch_mulesoft_project_context(self, repo_full_name: str) -> Dict[str, str]:
+        """
+        Fetch all relevant MuleSoft project source files from the repository.
+
+        Collects:
+        - All XML flow files from src/main/mule or src/main/app
+        - All DataWeave (.dwl) scripts from src/main/resources/dataweave or dw
+        - pom.xml and mule-artifact.json for project metadata
+
+        Returns:
+            Dict mapping file_path → file_content for all discovered project files.
+        """
+        if not self.github_client:
+            return {}
+
+        repo_full_name = self._normalize_repo_name(repo_full_name)
+        project_files: Dict[str, str] = {}
+
+        try:
+            repo = self.github_client.client.get_repo(repo_full_name)
+            branch = repo.default_branch
+            tree = repo.get_git_tree(branch, recursive=True)
+
+            mule_dirs = {"src/main/mule", "src/main/app"}
+            dw_dirs = {"src/main/resources/dataweave", "src/main/resources/dw"}
+            metadata_files = {"pom.xml", "mule-artifact.json"}
+
+            target_paths = [
+                item.path for item in tree.tree
+                if item.type == "blob" and (
+                    any(item.path.startswith(d + "/") for d in mule_dirs | dw_dirs)
+                    or item.path in metadata_files
+                )
+            ]
+
+            for path in target_paths:
+                content = self.github_client.get_file_content(repo_full_name, path)
+                if content:
+                    project_files[path] = content
+                    logger.info("[Code Fetch] Fetched project file: %s", path)
+
+            logger.info(
+                "[Code Fetch] Fetched %d MuleSoft project files from %s",
+                len(project_files), repo_full_name,
+            )
+        except Exception as exc:
+            logger.warning("[Code Fetch] Failed to fetch MuleSoft project context: %s", exc)
+
+        return project_files
     
     def extract_error_file_info(self, raw_log: str, stack_trace: str, error_title: str, metadata: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
         """
@@ -222,19 +353,22 @@ class CodeFetcher:
         Returns:
             Dict with full_content, context_snippet, metadata
         """
-        if not self.github_client.client:
+        if not self.github_client:
             logger.warning("GitHub client not configured")
             return None
-        
+
         try:
+            filename = file_path.split('/')[-1]
+
+            # Ensure repo_full_name contains org/repo (not just repo name)
+            repo_full_name = self._normalize_repo_name(repo_full_name)
+
             # Fetch full file content (with fallback path attempts)
             full_content = self.github_client.get_file_content(repo_full_name, file_path)
 
             # If not found, try common alternate paths based on file type / conventions
             if not full_content:
                 alternatives: List[str] = []
-
-                filename = file_path.split('/')[-1]
 
                 # DataWeave: sometimes stored under different folder name
                 if file_path.startswith('src/main/resources/dataweave/'):
@@ -243,11 +377,13 @@ class CodeFetcher:
                     alternatives.append(f"src/main/resources/dataweave/{filename}")
                     alternatives.append(f"src/main/resources/dw/{filename}")
 
-                # Mule XML: sometimes stored under resources instead of src/main/mule
-                if file_path.startswith('src/main/mule/'):
-                    alternatives.append(file_path.replace('src/main/mule/', 'src/main/resources/'))
+                # Mule XML: prefer the standard MuleSoft source location src/main/mule.
+                # Some repos may use src/main/app, but XML should not be fetched from resources.
+                if file_path.startswith('src/main/mule/') or file_path.startswith('src/main/app/'):
+                    alternatives.append(file_path.replace('src/main/app/', 'src/main/mule/'))
+                    alternatives.append(file_path.replace('src/main/mule/', 'src/main/app/'))
                     alternatives.append(f"src/main/mule/{filename}")
-                    alternatives.append(f"src/main/resources/{filename}")
+                    alternatives.append(f"src/main/app/{filename}")
 
                 # YAML: sometimes stored in config/ or directly under resources
                 if file_path.endswith(('.yaml', '.yml')):
@@ -265,6 +401,14 @@ class CodeFetcher:
                         logger.info(f"✓ Fetched using alternate path: {alt_path}")
                         file_path = alt_path
                         break
+
+            if not full_content:
+                discovered_path = self._find_file_by_filename(repo_full_name, filename)
+                if discovered_path and discovered_path != file_path:
+                    logger.info(f"Retrying fetch using repository tree match: {discovered_path}")
+                    full_content = self.github_client.get_file_content(repo_full_name, discovered_path)
+                    if full_content:
+                        file_path = discovered_path
 
             if not full_content:
                 logger.warning(f"Could not fetch {file_path} from {repo_full_name} (including alternate paths)")
@@ -342,6 +486,7 @@ class CodeFetcher:
             elif file_type == 'yaml':
                 # For YAML config, fetch the main application file
                 related.append("src/main/mule/*.xml")
+                related.append("src/main/app/*.xml")
             
         except Exception as e:
             logger.error(f"Error finding related files: {str(e)}")

@@ -6,7 +6,7 @@ Roles:
   team_admin  — Manages a project's team, integrations, and feature access.
   user        — Regular team member; access scoped to assigned projects/features.
 
-Default admin credentials:  username=admin  password=admin123
+Default admin credentials:  username=admin  password=ChangeMe123!
 """
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _DATA_DIR = os.path.join(_HERE, "..", "data")
 _AUTH_FILE = os.path.join(_DATA_DIR, "auth_data.json")
 
+# Fields within each section that must be stored encrypted
 _SECRET_FIELDS = {
     "llm": {"api_key"},
     "jira": {"api_token"},
@@ -33,13 +34,16 @@ _SECRET_FIELDS = {
     "slack": {"webhook_url"},
     "teams": {"webhook_url"},
     "runtime": set(),
+    "repo_mappings": set(),  # no secrets — plain JSON mapping
 }
-_DB_CONFIG_SECTIONS = ("llm", "jira", "github", "anypoint", "slack", "teams", "runtime")
+
+# All sections persisted in the DB config table
+_DB_CONFIG_SECTIONS = ("llm", "jira", "github", "anypoint", "slack", "teams", "runtime", "repo_mappings")
 
 # ── Default admin credentials ───────────────────────────────────────────────
-DEFAULT_ADMIN_USERNAME = "admin"
-DEFAULT_ADMIN_PASSWORD = "admin123"
-DEFAULT_ADMIN_EMAIL = "admin@prism.local"
+DEFAULT_ADMIN_USERNAME = os.getenv("PRISM_DEFAULT_ADMIN_USERNAME", "admin")
+DEFAULT_ADMIN_PASSWORD = os.getenv("PRISM_DEFAULT_ADMIN_PASSWORD", "ChangeMe123!")
+DEFAULT_ADMIN_EMAIL = os.getenv("PRISM_DEFAULT_ADMIN_EMAIL", "admin@prism.local")
 
 # ── All available feature keys ───────────────────────────────────────────────
 ALL_FEATURES = [
@@ -85,6 +89,7 @@ def _default_project_config(project_id: str) -> dict:
         "teams": {},
         "teams_notif": {},
         "runtime": {},
+        "repo_mappings": {},
     }
 
 
@@ -208,9 +213,9 @@ def _seed_defaults() -> dict:
         "users": [],
         "projects": [],
         "teams": [],
-        "memberships": [],           # {id, user_id, team_id, role, assigned_at}
-        "project_assignments": [],   # {id, user_id, project_id, assigned_at}
-        "project_configs": [],       # legacy JSON configs migrated to DB automatically
+        "memberships": [],
+        "project_assignments": [],
+        "project_configs": [],
     }
     admin_id = "USR-ADMIN"
     data["users"].append(
@@ -220,7 +225,7 @@ def _seed_defaults() -> dict:
             "email": DEFAULT_ADMIN_EMAIL,
             "password_hash": _hash_password(DEFAULT_ADMIN_PASSWORD),
             "role": "admin",
-            "features": ALL_FEATURES,   # admin sees everything
+            "features": ALL_FEATURES,
             "created_at": _now(),
             "is_active": True,
         }
@@ -248,11 +253,7 @@ def _ensure_keys(data: dict) -> None:
 # ════════════════════════════════════════════════════════════════════════════
 
 def authenticate(username: str, password: str) -> Optional[dict]:
-    """Return user dict on success, None on failure.
-
-    If duplicate usernames exist, prefer the active user with project assignments,
-    then the most recently created record.
-    """
+    """Return user dict on success, None on failure."""
     data = _load()
     _ensure_keys(data)
     pw_hash = _hash_password(password)
@@ -316,7 +317,6 @@ def create_user(payload: dict) -> dict:
         return existing
 
     role = payload.get("role", "user")
-    # Default feature access based on role
     if role == "admin":
         default_features = ALL_FEATURES
     elif role == "team_admin":
@@ -400,10 +400,11 @@ def create_project(payload: dict) -> dict:
         "name": payload["name"],
         "description": payload.get("description", ""),
         "repo_url": payload.get("repo_url", ""),
+        "app_names": payload.get("app_names", []),
         "stack": payload.get("stack", ""),
         "environment": payload.get("environment", "production"),
-        "owner_id": "USR-ADMIN",          # always admin
-        "team_admin_id": payload.get("team_admin_id", ""),   # assigned Team Admin
+        "owner_id": "USR-ADMIN",
+        "team_admin_id": payload.get("team_admin_id", ""),
         "team_admin_email": payload.get("team_admin_email", ""),
         "created_at": _now(),
         "is_active": True,
@@ -445,13 +446,12 @@ def delete_project(project_id: str) -> bool:
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# PROJECT ↔ USER ASSIGNMENTS  (multi-project support)
+# PROJECT ↔ USER ASSIGNMENTS
 # ════════════════════════════════════════════════════════════════════════════
 
 def assign_user_to_project(user_id: str, project_id: str) -> dict:
     data = _load()
     _ensure_keys(data)
-    # idempotent
     existing = next(
         (a for a in data["project_assignments"] if a["user_id"] == user_id and a["project_id"] == project_id),
         None,
@@ -483,11 +483,9 @@ def get_user_projects(user_id: str) -> list:
     user = next((u for u in data["users"] if u["id"] == user_id), None)
     if not user:
         return []
-    # Admin sees all projects
     if user.get("role") == "admin":
         return data.get("projects", [])
     project_ids = {a["project_id"] for a in data["project_assignments"] if a["user_id"] == user_id}
-    # Also include projects where user is team_admin
     for p in data.get("projects", []):
         if p.get("team_admin_id") == user_id:
             project_ids.add(p["id"])
@@ -547,6 +545,26 @@ def clear_project_config(project_id: str, section: str) -> Optional[dict]:
         session.flush()
 
     return _load_db_project_config(project_id, mask_secrets=False) or _default_project_config(project_id)
+
+
+def get_app_repo_mapping(project_id: str) -> dict:
+    """
+    Return the app→repo mapping dict for a project.
+    Structure: { "app-name": {"repo": "org/repo", "branch": "main", "description": ""}, ... }
+    Returns an empty dict if none configured.
+    """
+    cfg = get_project_config(project_id)
+    if not cfg:
+        return {}
+    return dict(cfg.get("repo_mappings") or {})
+
+
+def set_app_repo_mapping(project_id: str, mappings: dict) -> dict:
+    """
+    Overwrite the full app→repo mapping for a project.
+    mappings: { "app-name": {"repo": "org/repo", "branch": "main", "description": ""}, ... }
+    """
+    return update_project_config(project_id, "repo_mappings", mappings) or {}
 
 
 # ════════════════════════════════════════════════════════════════════════════

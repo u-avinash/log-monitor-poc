@@ -16,13 +16,24 @@ root_cause_analysis: |
   STACK TRACE:
   {stack_trace}
   
+  GITHUB / PROJECT CONTEXT:
+  Repository: {repo_full_name}
+  Error File: {error_file_path}
+  File Type: {error_file_type}
+  Error Line: {error_line_number}
+  
+  FETCHED SOURCE CODE:
+  {fetched_code}
+  
+  Use the fetched code and repository context when it is available. If the code context is missing, explicitly state that the RCA is based on logs and stack trace only.
+  
   Provide your RCA following this structure:
   1. **Summary** (2-3 sentences): What went wrong and immediate impact
-  2. **Root Cause** (detailed): Technical explanation of why this error occurred
-  3. **Affected Components**: List Mule flows, connectors, or services impacted
-  4. **Contributing Factors**: Configuration issues, data problems, or environmental factors
-  5. **Recommended Solution**: High-level fix strategy
-  6. **Prevention**: How to avoid this in future
+  2. **Root Cause** (detailed): Technical explanation of why this error occurred, referencing the relevant Mule flow / code path when possible
+  3. **Affected Components**: List Mule flows, connectors, files, branches, or services impacted
+  4. **Contributing Factors**: Configuration issues, data problems, code gaps, or environmental factors
+  5. **Recommended Solution**: High-level fix strategy tied to the observed code/log context
+  6. **Prevention**: How to avoid this in future with workflow, validation, and observability improvements
   
   Be specific, technical, and actionable. Focus on MuleSoft-specific patterns.
 
@@ -85,7 +96,7 @@ fix_quality_reflection: |
   4. **Completeness** (0-10): Are all edge cases handled?
   
   Provide ONLY valid JSON (no markdown, no extra text):
-  {
+  {{
     "correctness_score": <0-10>,
     "safety_score": <0-10>,
     "code_quality_score": <0-10>,
@@ -94,7 +105,7 @@ fix_quality_reflection: |
     "concerns": ["concern 1", "concern 2"],
     "recommendation": "APPROVE" or "REJECT",
     "reasoning": "brief explanation"
-  }
+  }}
 
 github_pr_description: |
   Generate a professional GitHub Pull Request description for an AI-generated bug fix.

@@ -10,22 +10,6 @@
         <svg class="settings-nav__icon" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="3" stroke="currentColor" stroke-width="1.5"/><path d="M10 2v2M10 16v2M2 10h2M16 10h2M4.22 4.22l1.42 1.42M14.36 14.36l1.42 1.42M4.22 15.78l1.42-1.42M14.36 5.64l1.42-1.42" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
         <span>General</span>
       </a>
-      <a href="#" class="settings-nav__item" data-section="llm">
-        <svg class="settings-nav__icon" viewBox="0 0 20 20" fill="none"><rect x="2" y="5" width="16" height="10" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M6 9h2M6 11h5M13 9h1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-        <span>LLM Provider</span>
-      </a>
-      <a href="#" class="settings-nav__item" data-section="github">
-        <svg class="settings-nav__icon" viewBox="0 0 20 20" fill="none"><path d="M10 2C5.58 2 2 5.58 2 10c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0018 10c0-4.42-3.58-8-8-8z" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        <span>GitHub</span>
-      </a>
-      <a href="#" class="settings-nav__item" data-section="jira">
-        <svg class="settings-nav__icon" viewBox="0 0 20 20" fill="none"><path d="M10.5 2.5l7 7-7.5 8-7.5-8 7-7z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M10 6.5L7 10l3 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        <span>Jira</span>
-      </a>
-      <a href="#" class="settings-nav__item" data-section="notifications">
-        <svg class="settings-nav__icon" viewBox="0 0 20 20" fill="none"><path d="M10 2a6 6 0 00-6 6v3l-1.5 2.5h15L16 11V8a6 6 0 00-6-6z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8.5 16.5a1.5 1.5 0 003 0" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-        <span>Notifications</span>
-      </a>
     </nav>
   </aside>
 
@@ -35,20 +19,10 @@
     <div class="settings-section settings-section--active" data-section="general">
       <div class="settings-section__header">
         <h2 class="settings-section__title">General</h2>
-        <p class="settings-section__desc">Core application configuration and behaviour settings.</p>
+        <p class="settings-section__desc">Core application behaviour settings. Integration credentials (LLM, Jira, GitHub, Slack, Teams) are managed per-project via Team Admin → Project Configuration.</p>
       </div>
       <form method="post" action="/settings/general">
         <div class="settings-card">
-          <div class="settings-card__row">
-            <div class="settings-card__row-info">
-              <label class="settings-card__row-label" for="dbUrl">Database URL</label>
-              <p class="settings-card__row-hint">SQLite or PostgreSQL connection string</p>
-            </div>
-            <div class="settings-card__row-control">
-              <input class="input" type="text" id="dbUrl" name="db_url" value="{{ settings.get('db_url','') }}" placeholder="sqlite:///./data/incidents.db">
-            </div>
-          </div>
-          <div class="settings-card__divider"></div>
           <div class="settings-card__row">
             <div class="settings-card__row-info">
               <label class="settings-card__row-label" for="approvalMode">Approval Mode</label>
@@ -63,186 +37,18 @@
         </div>
         <div class="settings-actions"><button class="btn btn-primary" type="submit">Save Changes</button></div>
       </form>
-    </div>
 
-    <!-- LLM -->
-    <div class="settings-section" data-section="llm" hidden>
-      <div class="settings-section__header">
-        <h2 class="settings-section__title">LLM Provider</h2>
-        <p class="settings-section__desc">Configure the AI model used for incident analysis and fix generation.</p>
-      </div>
-      <form method="post" action="/settings/llm">
-        <div class="settings-card">
-          <div class="settings-card__row">
-            <div class="settings-card__row-info">
-              <label class="settings-card__row-label" for="llmProvider">Provider</label>
-              <p class="settings-card__row-hint">The LLM service to use</p>
-            </div>
-            <div class="settings-card__row-control">
-              <select class="input" id="llmProvider" name="llm_provider">
-                {% for opt in ['openai','anthropic','azure_openai','ollama'] %}<option value="{{ opt }}" {% if settings.get('llm_provider')==opt %}selected{% endif %}>{{ opt|replace('_',' ')|title }}</option>{% endfor %}
-              </select>
-            </div>
+      <div class="settings-card" style="margin-top:1.5rem;">
+        <div class="settings-card__row">
+          <div class="settings-card__row-info">
+            <span class="settings-card__row-label">Integration Credentials</span>
+            <p class="settings-card__row-hint">LLM, Jira, GitHub, Slack, Teams, and Repo Mappings are configured per-project.</p>
           </div>
-          <div class="settings-card__divider"></div>
-          <div class="settings-card__row">
-            <div class="settings-card__row-info">
-              <label class="settings-card__row-label" for="llmModel">Model</label>
-              <p class="settings-card__row-hint">e.g. gpt-4o or claude-3-5-sonnet</p>
-            </div>
-            <div class="settings-card__row-control">
-              <input class="input" type="text" id="llmModel" name="llm_model" value="{{ settings.get('llm_model','') }}" placeholder="gpt-4o">
-            </div>
-          </div>
-          <div class="settings-card__divider"></div>
-          <div class="settings-card__row">
-            <div class="settings-card__row-info">
-              <label class="settings-card__row-label" for="llmApiKey">API Key</label>
-              <p class="settings-card__row-hint">Stored in environment — never logged</p>
-            </div>
-            <div class="settings-card__row-control">
-              <input class="input" type="password" id="llmApiKey" name="llm_api_key" value="{{ settings.get('llm_api_key','') }}" placeholder="sk-…">
-            </div>
-          </div>
-          <div class="settings-card__divider"></div>
-          <div class="settings-card__row">
-            <div class="settings-card__row-info">
-              <label class="settings-card__row-label" for="llmBaseUrl">Base URL</label>
-              <p class="settings-card__row-hint">Optional — override default API endpoint</p>
-            </div>
-            <div class="settings-card__row-control">
-              <input class="input" type="text" id="llmBaseUrl" name="llm_base_url" value="{{ settings.get('llm_base_url','') }}" placeholder="https://api.openai.com/v1">
-            </div>
-          </div>
-        </div>
-        <div class="settings-actions"><button class="btn btn-primary" type="submit">Save Changes</button></div>
-      </form>
-    </div>
-
-    <!-- GITHUB -->
-    <div class="settings-section" data-section="github" hidden>
-      <div class="settings-section__header">
-        <h2 class="settings-section__title">GitHub</h2>
-        <p class="settings-section__desc">Connect to GitHub for automated pull request creation and code access.</p>
-      </div>
-      <form method="post" action="/settings/github">
-        <div class="settings-card">
-          <div class="settings-card__row">
-            <div class="settings-card__row-info">
-              <label class="settings-card__row-label" for="ghToken">Personal Access Token</label>
-              <p class="settings-card__row-hint">Requires <code>repo</code> and <code>pull_request</code> scopes</p>
-            </div>
-            <div class="settings-card__row-control">
-              <input class="input" type="password" id="ghToken" name="github_token" value="{{ settings.get('github_token','') }}" placeholder="ghp_…">
-            </div>
-          </div>
-          <div class="settings-card__divider"></div>
-          <div class="settings-card__row">
-            <div class="settings-card__row-info">
-              <label class="settings-card__row-label" for="ghOrg">Organisation / Owner</label>
-              <p class="settings-card__row-hint">Default GitHub org or user for repositories</p>
-            </div>
-            <div class="settings-card__row-control">
-              <input class="input" type="text" id="ghOrg" name="github_org" value="{{ settings.get('github_org','') }}" placeholder="my-org">
-            </div>
-          </div>
-          <div class="settings-card__divider"></div>
-          <div class="settings-card__row">
-            <div class="settings-card__row-info">
-              <label class="settings-card__row-label" for="ghBranch">Default Base Branch</label>
-              <p class="settings-card__row-hint">Branch PRs are opened against</p>
-            </div>
-            <div class="settings-card__row-control">
-              <input class="input" type="text" id="ghBranch" name="default_branch" value="{{ settings.get('default_branch','main') }}" placeholder="main">
-            </div>
-          </div>
-        </div>
-        <div class="settings-actions"><button class="btn btn-primary" type="submit">Save Changes</button></div>
-      </form>
-    </div>
-
-    <!-- JIRA -->
-    <div class="settings-section" data-section="jira" hidden>
-      <div class="settings-section__header">
-        <h2 class="settings-section__title">Jira</h2>
-        <p class="settings-section__desc">Connect to Jira to automatically create and track incident tickets.</p>
-      </div>
-      <form method="post" action="/settings/jira">
-        <div class="settings-card">
-          <div class="settings-card__row">
-            <div class="settings-card__row-info">
-              <label class="settings-card__row-label" for="jiraUrl">Instance URL</label>
-              <p class="settings-card__row-hint">Your Atlassian cloud or self-hosted URL</p>
-            </div>
-            <div class="settings-card__row-control">
-              <input class="input" type="text" id="jiraUrl" name="jira_url" value="{{ settings.get('jira_url','') }}" placeholder="https://yourorg.atlassian.net">
-            </div>
-          </div>
-          <div class="settings-card__divider"></div>
-          <div class="settings-card__row">
-            <div class="settings-card__row-info">
-              <label class="settings-card__row-label" for="jiraEmail">Account Email</label>
-              <p class="settings-card__row-hint">Email associated with the API token</p>
-            </div>
-            <div class="settings-card__row-control">
-              <input class="input" type="email" id="jiraEmail" name="jira_email" value="{{ settings.get('jira_email','') }}" placeholder="you@company.com">
-            </div>
-          </div>
-          <div class="settings-card__divider"></div>
-          <div class="settings-card__row">
-            <div class="settings-card__row-info">
-              <label class="settings-card__row-label" for="jiraToken">API Token</label>
-              <p class="settings-card__row-hint">Generate at id.atlassian.com/manage-profile/security/api-tokens</p>
-            </div>
           <div class="settings-card__row-control">
-              <input class="input" type="password" id="jiraToken" name="jira_token" value="{{ settings.get('jira_token','') }}" placeholder="ATATT3x…">
-            </div>
-          </div>
-          <div class="settings-card__divider"></div>
-          <div class="settings-card__row">
-            <div class="settings-card__row-info">
-              <label class="settings-card__row-label" for="jiraProject">Project Key</label>
-              <p class="settings-card__row-hint">The Jira project where tickets are created</p>
-            </div>
-            <div class="settings-card__row-control">
-              <input class="input" type="text" id="jiraProject" name="jira_project" value="{{ settings.get('jira_project','') }}" placeholder="OPS">
-            </div>
+            <a href="/team-admin/onboarding" class="btn btn-ghost">Go to Project Configuration →</a>
           </div>
         </div>
-        <div class="settings-actions"><button class="btn btn-primary" type="submit">Save Changes</button></div>
-      </form>
-    </div>
-
-    <!-- NOTIFICATIONS -->
-    <div class="settings-section" data-section="notifications" hidden>
-      <div class="settings-section__header">
-        <h2 class="settings-section__title">Notifications</h2>
-        <p class="settings-section__desc">Configure where alerts and incident notifications are sent.</p>
       </div>
-      <form method="post" action="/settings/notifications">
-        <div class="settings-card">
-          <div class="settings-card__row">
-            <div class="settings-card__row-info">
-              <label class="settings-card__row-label" for="slackWebhook">Slack Webhook URL</label>
-              <p class="settings-card__row-hint">Incoming webhook for Slack channel notifications</p>
-            </div>
-            <div class="settings-card__row-control">
-              <input class="input" type="text" id="slackWebhook" name="slack_webhook_url" value="{{ settings.get('slack_webhook_url','') }}" placeholder="https://hooks.slack.com/services/…">
-            </div>
-          </div>
-          <div class="settings-card__divider"></div>
-          <div class="settings-card__row">
-            <div class="settings-card__row-info">
-              <label class="settings-card__row-label" for="emailRecipients">Email Recipients</label>
-              <p class="settings-card__row-hint">Comma-separated list of email addresses</p>
-            </div>
-            <div class="settings-card__row-control">
-              <input class="input" type="text" id="emailRecipients" name="email_recipients" value="{{ settings.get('email_recipients','') }}" placeholder="ops@company.com, sre@company.com">
-            </div>
-          </div>
-        </div>
-        <div class="settings-actions"><button class="btn btn-primary" type="submit">Save Changes</button></div>
-      </form>
     </div>
 
   </div><!-- /.settings-content -->
@@ -312,24 +118,22 @@
 .settings-card__row-info { flex: 1; min-width: 0; }
 .settings-card__row-label { display: block; font-size: 13.5px; font-weight: 500; color: var(--text-primary, #111827); margin-bottom: 3px; }
 .settings-card__row-hint { font-size: 12.5px; color: var(--text-muted, #9ca3af); margin: 0; }
-.settings-card__row-hint code { background: var(--bg-code, #f3f4f6); padding: 1px 5px; border-radius: 4px; font-size: 11.5px; }
 .settings-card__row-control { flex-shrink: 0; width: 300px; }
 .settings-card__row-control .input { width: 100%; box-sizing: border-box; }
-.settings-card__divider { height: 1px; background: var(--border, #e5e7eb); margin: 0 24px; }
 .settings-actions { margin-top: 20px; display: flex; justify-content: flex-end; }
 </style>
 
 <script>
 (function() {
-  const items = document.querySelectorAll('.settings-nav__item');
-  const sections = document.querySelectorAll('.settings-section');
-  items.forEach(item => {
+  var items = document.querySelectorAll('.settings-nav__item');
+  var sections = document.querySelectorAll('.settings-section');
+  items.forEach(function(item) {
     item.addEventListener('click', function(e) {
       e.preventDefault();
-      const target = this.dataset.section;
-      items.forEach(i => i.classList.remove('settings-nav__item--active'));
+      var target = this.dataset.section;
+      items.forEach(function(i) { i.classList.remove('settings-nav__item--active'); });
       this.classList.add('settings-nav__item--active');
-      sections.forEach(s => {
+      sections.forEach(function(s) {
         if (s.dataset.section === target) { s.classList.add('settings-section--active'); s.hidden = false; }
         else { s.classList.remove('settings-section--active'); s.hidden = true; }
       });

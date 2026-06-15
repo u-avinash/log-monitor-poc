@@ -203,7 +203,7 @@ class OTLPParser:
                 return None
             
             exception_message = telemetry_log.error_message or telemetry_log.message
-            exception_type = telemetry_log.error_type or "UnknownException"
+            exception_type = telemetry_log.error_type
             stack_trace = telemetry_log.attributes.get("exception.stacktrace", "")
             cloudhub_app = telemetry_log.attributes.get("cloudhub.application.name", "")
             cloudhub_org = telemetry_log.attributes.get("cloudhub.org.id", telemetry_log.attributes.get("organization.id", ""))
@@ -212,6 +212,8 @@ class OTLPParser:
 
             if exception_type and exception_message:
                 error_title = f"{exception_type}: {exception_message[:100]}"
+            elif exception_message:
+                error_title = exception_message[:150]
             else:
                 error_title = telemetry_log.message[:150] if telemetry_log.message else "Unknown Error"
 

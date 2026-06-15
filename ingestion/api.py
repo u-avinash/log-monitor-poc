@@ -175,113 +175,71 @@ async def record_request_middleware(request: Request, call_next):
 async def process_incident_workflow(incident_id: str):
     """
     Background task to process incident through agent workflow.
-    
+
+    Uses run_incident_workflow which properly resolves project_id from the
+    incident's app_name so that the correct project's integration configs
+    (LLM, Jira, GitHub, etc.) are used.
+
     Args:
         incident_id: 4-character alphanumeric incident ID (e.g., A7CB)
     """
     try:
         logger.info(f"Starting workflow for incident {incident_id}")
-        
-        # Get incident from database
+
+        from agents.workflow import run_incident_workflow, _resolve_project_id_for_incident
+
         db = next(get_db())
         repo = IncidentRepository(db)
         incident = repo.get_by_id(incident_id)
-        
+
         if not incident:
             logger.error(f"Incident {incident_id} not found")
             return
-        
-        # Create initial state using helper function
-        from agents.state import create_initial_state
-        
-        initial_state = create_initial_state(
-            incident_id=str(incident_id),
-            app_name=incident.app_name,
-            environment=incident.environment,
-            error_title=incident.error_title,
+
+        # Resolve the project this incident belongs to so the workflow can load
+        # the correct LLM / integration configs even when the app name doesn't
+        # directly match a project name.
+        project_id = _resolve_project_id_for_incident(
+            None,
+            incident.app_name,
+            incident.environment,
+        )
+
+        if not project_id:
+            logger.warning(
+                "[Workflow] Could not resolve project for incident=%s app=%s env=%s. "
+                "Attempting to use any available project LLM config as fallback. "
+                "To fix permanently, ensure app names match a project name/repo or configure "
+                "app_names in project settings.",
+                incident_id,
+                incident.app_name,
+                incident.environment,
+            )
+        else:
+            logger.info(
+                "[Workflow] Resolved project_id=%s for incident=%s app=%s",
+                project_id, incident_id, incident.app_name,
+            )
+
+        await run_incident_workflow(
+            incident_id=incident.incident_id,
+            app_name=incident.app_name or "",
+            environment=incident.environment or "",
+            error_title=incident.error_title or "",
             error_description=incident.error_description or "",
             stack_trace=incident.stack_trace or "",
             raw_log=incident.raw_log or "",
             fingerprint=incident.error_fingerprint or "",
-            severity=incident.severity or "MEDIUM",
-            is_duplicate=False,  # Will be False for new incidents
-            created_at=incident.created_at.isoformat() if incident.created_at else datetime.utcnow().isoformat(),
-            metadata=incident.incident_metadata  # Pass OTLP metadata to state
+            severity=incident.severity or "HIGH",
+            is_duplicate=False,
+            metadata=incident.incident_metadata,
+            project_id=project_id,
         )
-        
-        # Create and invoke workflow
-        workflow = create_agent_workflow()
-        
-        logger.info(f"Invoking LangGraph workflow for incident {incident_id}")
-        final_state = workflow.invoke(initial_state)
-        
-        # Update incident in database with results
-        updates = {}
-        
-        if final_state.get('rca_text'):
-            updates['rca_text'] = final_state['rca_text']
-            updates['rca_confidence'] = final_state.get('rca_confidence')
-        
-        if final_state.get('proposed_fix'):
-            updates['proposed_fix'] = final_state['proposed_fix']
-            updates['fix_explanation'] = final_state.get('fix_explanation')
-            updates['fix_quality_score'] = final_state.get('overall_quality_score')
-        
-        if final_state.get('pdf_path'):
-            updates['pdf_path'] = final_state['pdf_path']
-        
-        if final_state.get('patch_path'):
-            updates['patch_path'] = final_state['patch_path']
-        
-        if final_state.get('pr_url'):
-            updates['pr_url'] = final_state['pr_url']
-        
-        if final_state.get('jira_ticket_url'):
-            updates['jira_ticket_url'] = final_state['jira_ticket_url']
-        
-        if final_state.get('jira_ticket_key'):
-            updates['jira_ticket_key'] = final_state['jira_ticket_key']
-        
-        # Update status based on workflow outcome
-        if final_state.get('status'):
-            repo.update_status(incident_id, final_state['status'])
-        elif final_state.get('requires_approval') and final_state.get('proposed_fix'):
-            repo.update_status(incident_id, IncidentStatus.PENDING_APPROVAL)
-        
-        # Apply updates
-        if updates:
-            for field, value in updates.items():
-                setattr(incident, field, value)
-            db.commit()
-        
+
         logger.info(f"Workflow completed for incident {incident_id}")
-        
-        # Create Jira ticket if workflow completed successfully
-        if settings.jira_url and settings.jira_api_token:
-            jira_client = JiraClient()
-            if jira_client.client and not incident.jira_ticket_key:
-                logger.info(f"Creating Jira ticket for incident {incident_id}")
-                ticket_info = jira_client.create_incident_ticket(
-                    incident_id=incident_id,
-                    app_name=incident.app_name,
-                    environment=incident.environment,
-                    error_title=incident.error_title,
-                    error_description=incident.error_description or "",
-                    severity=incident.severity,
-                    stack_trace=incident.stack_trace,
-                    rca_text=incident.rca_text,
-                    proposed_fix=incident.proposed_fix,
-                    pr_url=None  # PR not created yet
-                )
-                if ticket_info:
-                    incident.jira_ticket_key = ticket_info["ticket_key"]
-                    incident.jira_ticket_url = ticket_info["ticket_url"]
-                    db.commit()
-                    logger.info(f"Jira ticket created: {ticket_info['ticket_key']}")
-        
+
     except Exception as e:
         logger.error(f"Workflow failed for incident {incident_id}: {str(e)}")
-        # Update incident with error
         try:
             db = next(get_db())
             repo = IncidentRepository(db)
@@ -620,8 +578,14 @@ async def ingest_log(incident: IncidentCreate, background_tasks: BackgroundTasks
             severity=severity
         )
         
-        # Trigger agent workflow in background
+        # Mark as analyzing immediately so the UI does not sit in DETECTED
+        # while the background workflow is queued and starting up.
         if settings.auto_fix_enabled:
+            repo.update(
+                new_incident.incident_id,
+                status=IncidentStatus.ANALYZING.value,
+                current_workflow_node="assess_severity",
+            )
             logger.info(f"Triggering workflow for incident {new_incident.incident_id}")
             background_tasks.add_task(process_incident_workflow, new_incident.incident_id)
         
@@ -750,8 +714,14 @@ async def ingest_v1_logs(payload: dict, background_tasks: BackgroundTasks):
                     incident_id=new_incident.incident_id,
                 )
                 
-                # Trigger agent workflow in background if enabled
+                # Mark as analyzing immediately so status moves off DETECTED
+                # before the async workflow finishes bootstrapping.
                 if settings.auto_fix_enabled:
+                    repo.update(
+                        new_incident.incident_id,
+                        status=IncidentStatus.ANALYZING.value,
+                        current_workflow_node="assess_severity",
+                    )
                     logger.info(f"Triggering workflow for OTLP incident {new_incident.incident_id}")
                     background_tasks.add_task(process_incident_workflow, new_incident.incident_id)
                 
@@ -1025,8 +995,14 @@ async def ingest_otlp(payload: dict, background_tasks: BackgroundTasks):
                     incident_id=new_incident.incident_id,
                 )
                 
-                # Trigger agent workflow in background if enabled
+                # Mark as analyzing immediately so status moves off DETECTED
+                # before the async workflow finishes bootstrapping.
                 if settings.auto_fix_enabled:
+                    repo.update(
+                        new_incident.incident_id,
+                        status=IncidentStatus.ANALYZING.value,
+                        current_workflow_node="assess_severity",
+                    )
                     logger.info(f"Triggering workflow for OTLP incident {new_incident.incident_id}")
                     background_tasks.add_task(process_incident_workflow, new_incident.incident_id)
                 
